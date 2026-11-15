@@ -93,6 +93,7 @@ aside h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(
     <button data-mode="draw" title="Draw a new lot by clicking its corners">Draw lot</button>
     <button data-mode="street" title="Click on the map to add a street name">Add street name</button>
   </div>
+  <button class="btn" id="heatBtn" title="Color homes by when each family moved in (H)">Heat map</button>
   <button class="btn" id="undo" title="Undo (Ctrl+Z)">↶ Undo</button>
   <button class="btn" id="redo" title="Redo (Ctrl+Y)">↷ Redo</button>
   <div class="spacer"></div>
@@ -311,7 +312,7 @@ function arrowSVG(a){const ang=Math.atan2(a.y2-a.y1,a.x2-a.x1);const L=16,W=8;
 function numberRun(n){return {t:n.text,size:n.size||SZ.num,b:false,i:false};}
 function pageSVG(pg,{interactive=true}={}){
   const up=pg.updatedPos||{x:2506,y:3266};
-  return `<rect x="0" y="0" width="2550" height="3300" fill="#fff"/>`+pageBody(pg,interactive)+
+  return `<rect x="0" y="0" width="2550" height="3300" fill="#fff"/>`+pageBody(pg,interactive)+(heat?legendSVG(HEAT_LEGEND[data.pages.indexOf(pg)]||HEAT_LEGEND[0]):'')+
     `<g style="font-family:${FONT.replace(/"/g,"'")}">`+runSVG({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'})+'</g>';
 }
 function latestDate(){return data.pages.map(p=>p.updated).sort().pop();}
@@ -323,6 +324,7 @@ function bigSVG({interactive=true}={}){
     `<g clip-path="url(#clipA)">${pageBody(data.pages[0],interactive,true)}</g>`+
     `<g clip-path="url(#clipB)"><g transform="matrix(${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty})">${pageBody(data.pages[1],interactive,true)}</g></g>`+
     `<g style="font-family:${FONT.replace(/"/g,"'")}">${bigStreets(0).map(s=>streetSVG(s,-1,false)).join('')}<g transform="matrix(${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty})">${bigStreets(1).map(s=>streetSVG(s,-1,false)).join('')}</g></g>`+
+    (heat?legendSVG(HEAT_LEGEND_BIG):'')+
     `<g style="font-family:${FONT.replace(/"/g,"'")}">`+runSVG({t:'Updated '+fmtDate(latestDate()),x:COMBO.upd.x,y:COMBO.upd.y,size:SZ.updated,b:false,i:false,anchor:'end'})+'</g>';
 }
 function seamX(y){const S=COMBO.seam;for(let i=1;i<S.length;i++){if(y<=S[i][1]){const a=S[i-1],b=S[i];return a[0]+(b[0]-a[0])*(y-a[1])/((b[1]-a[1])||1);}}return S[S.length-1][0];}
@@ -333,6 +335,7 @@ function streetSVG(s,k,interactive){return `<g transform="translate(${s.x} ${s.y
 function pageBody(pg,interactive,big=false){
   const o=[];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
   for(const L of lots){
+    if(heat){const c=lotHeat(L);if(c)o.push(`<path d="${polyPath(L.poly)}" fill="${hex(c)}"/>`);}
     if(L.status==='w12')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
     else if(L.status==='page1')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
   }
@@ -347,7 +350,7 @@ function pageBody(pg,interactive,big=false){
   // lot hit areas + highlights
   if(interactive){
     for(const L of lots){if(matches.has(L))o.push(`<path class="match" d="${polyPath(L.poly)}"/>`);}
-    for(const L of lots)o.push(`<path class="lot" data-lot="${L.id}" d="${polyPath(L.poly)}"/>`);
+    for(const L of lots)o.push(`<path class="lot" data-lot="${L.id}" d="${polyPath(L.poly)}">${heat&&realFams(L).length?`<title>${esc(lotTip(L))}</title>`:''}</path>`);
     if(sel){const L=lots.find(l=>l.id===sel);if(L)o.push(`<path class="sel" d="${polyPath(L.poly)}"/>`);}
   }
   for(const L of lots){
@@ -367,9 +370,62 @@ function pageBody(pg,interactive,big=false){
   return o.join('');
 }
 
+
+// ---------- heat map: colors homes by when the family moved in ----------
+let heat=false,heatScale='fit';
+try{heat=localStorage.getItem('wm-heat')==='1';heatScale=localStorage.getItem('wm-heatScale')||'fit';}catch(e){}
+const HEAT_LEGEND=[{x:60,y:60},{x:1560,y:2985}],HEAT_LEGEND_BIG={x:60,y:-300};
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function parseAdded(s){const m=/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s||'');return m?new Date(+m[1],m[2]?+m[2]-1:6,m[3]?+m[3]:m[2]?15:1):null;}
+function readDateInput(v){ // "3/2024", "03/2024", "Mar 2024", "March 2024", "2024-03", "2024" -> stored value; '' clears; null = can't read
+  v=(v||'').trim();if(!v)return '';let m;
+  if((m=/^(\d{1,2})\s*[\/\-.]\s*(\d{4})$/.exec(v))&&+m[1]>=1&&+m[1]<=12)return m[2]+'-'+String(+m[1]).padStart(2,'0');
+  if((m=/^(\d{4})\s*[\/\-.]\s*(\d{1,2})$/.exec(v))&&+m[2]>=1&&+m[2]<=12)return m[1]+'-'+String(+m[2]).padStart(2,'0');
+  if((m=/^([a-z]{3,9})\.?\s*,?\s*(\d{4})$/i.exec(v))){const i=MON.findIndex(x=>m[1].toLowerCase().startsWith(x.toLowerCase()));if(i>=0)return m[2]+'-'+String(i+1).padStart(2,'0');}
+  if((m=/^(\d{4})$/.exec(v))&&+m[1]>1900&&+m[1]<2200)return m[1];
+  return null;}
+function showAdded(s){const d=parseAdded(s);if(!d)return '';return /^\d{4}$/.test(s)?s:MON[d.getMonth()]+' '+d.getFullYear();}
+function fmtAdded(s){return showAdded(s);}
+function ageDays(h){const d=parseAdded(h.added);return d?Math.max(0,(Date.now()-d)/864e5):null;}
+function ageText(days){if(days<45)return 'this month';const mo=Math.round(days/30.44);if(mo<12)return mo+' mo ago';const y=Math.floor(mo/12),m=mo%12;return y+' yr'+(m?' '+m+' mo':'')+' ago';}
+const realFams=L=>L.households.filter(h=>h.first||h.last);
+function heatRange(){let lo=Infinity,hi=-Infinity;for(const p of data.pages)for(const L of p.lots)for(const h of realFams(L)){const a=ageDays(h);if(a!==null){lo=Math.min(lo,a);hi=Math.max(hi,a);}}
+  return lo===Infinity?null:{lo,hi};}
+let heatCache=null;
+function heatT(days){
+  if(heatScale==='fixed')return Math.min(1,Math.log1p(days)/Math.log1p(3652));
+  const r=heatCache||heatRange();if(!r)return 0;const a=Math.log1p(r.lo),b=Math.log1p(r.hi);return b-a<1e-6?0:Math.min(1,Math.max(0,(Math.log1p(days)-a)/(b-a)));}
+function hsl2rgb(h,s,l){const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l),f=n=>l-a*Math.max(-1,Math.min(k(n)-3,9-k(n),1));return [f(0),f(8),f(4)];}
+function heatRGB(t){const c=hsl2rgb(265*t,0.9,0.55),o=0.62;return c.map(v=>v*o+(1-o));}
+const hex=c=>'#'+c.map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
+function lotHeat(L){if(L.status!=='ward')return null;let best=null;for(const h of realFams(L)){const a=ageDays(h);if(a!==null&&(best===null||a<best))best=a;}return best===null?null:heatRGB(heatT(best));}
+function lotTip(L){return realFams(L).map(h=>{const a=ageDays(h);return `${(h.first+' '+h.last).trim()} — ${a===null?'no move-in date yet':'moved in '+fmtAdded(h.added)+' ('+ageText(a)+')'}`;}).join('\n');}
+function heatLegend(x,y){ // shapes shared by the screen and the PDF
+  const W=560,bh=34,N=40,rects=[],texts=[];
+  rects.push({x:x-18,y:y-18,w:W+36,h:200,fill:[1,1,1],stroke:true});
+  texts.push({t:'Moved into the ward',x:x,y:y+24,size:28,b:true,i:false,anchor:'start'});
+  for(let i=0;i<N;i++){rects.push({x:x+i*W/N,y:y+44,w:W/N+0.6,h:bh,fill:heatRGB(i/(N-1))});}
+  rects.push({x:x,y:y+44,w:W,h:bh,fill:null,stroke:true});
+  let ticks;
+  if(heatScale==='fixed')ticks=[[0,'Now'],[182,'6 mo'],[365,'1 yr'],[1826,'5 yr'],[3652,'10 yr+']].map(([d,l])=>[heatT(d),l]);
+  else{const r=heatCache||heatRange();ticks=r?[[0,'Newest'],[1,'Oldest']]:[[0,'No dates yet']];
+    if(r){const d0=new Date(Date.now()-r.lo*864e5),d1=new Date(Date.now()-r.hi*864e5);ticks=[[0,MON[d0.getMonth()]+' '+d0.getFullYear()],[1,MON[d1.getMonth()]+' '+d1.getFullYear()]];
+      const mid=Math.expm1((Math.log1p(r.lo)+Math.log1p(r.hi))/2),dm=new Date(Date.now()-mid*864e5);if(r.hi-r.lo>60)ticks.splice(1,0,[0.5,MON[dm.getMonth()]+' '+dm.getFullYear()]);}}
+  ticks.forEach(([t,l],i)=>texts.push({t:l,x:x+t*W,y:y+44+bh+30,size:22,b:false,i:false,anchor:t<0.02?'start':t>0.98?'end':'middle'}));
+  rects.push({x:x,y:y+128,w:28,h:28,fill:[1,1,1],stroke:true});
+  texts.push({t:'No move-in date yet',x:x+40,y:y+150,size:22,b:false,i:true,anchor:'start',color:'#555'});
+  return {rects,texts};
+}
+function legendSVG(p){const {rects,texts}=heatLegend(p.x,p.y);
+  return `<g style="font-family:${FONT.replace(/"/g,"'")}">`+rects.map(r=>`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${r.fill?hex(r.fill):'none'}" ${r.stroke?'stroke="#000" stroke-width="3"':''}/>`).join('')+texts.map(t=>runSVG(t)).join('')+'</g>';}
+function legendPDF(p,c){const {rects,texts}=heatLegend(p.x,p.y);
+  for(const r of rects){if(r.fill)c.push(`${r.fill.map(f2).join(' ')} rg ${f2(r.x)} ${f2(r.y)} ${f2(r.w)} ${f2(r.h)} re f`);if(r.stroke)c.push(`0 G 3 w ${f2(r.x)} ${f2(r.y)} ${f2(r.w)} ${f2(r.h)} re S`);}
+  for(const t of texts)c.push(pdfText(t));}
+function setHeat(on){heat=on;try{localStorage.setItem('wm-heat',on?'1':'0');}catch(e){}$('#heatBtn').classList.toggle('primary',on);render();}
+
 // ---------- main render ----------
 function render({panel=true}={}){
-  const svg=$('#map');
+  const svg=$('#map');heatCache=heatRange();
   svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);
   let extra='';
   if(mode==='draw'&&drawPts.length){extra=`<polyline points="${drawPts.map(p=>p.join(',')).join(' ')}" fill="rgba(31,111,235,.1)" stroke="#1f6feb" stroke-width="5" stroke-dasharray="14 8"/>`+drawPts.map((p,i)=>`<circle cx="${p[0]}" cy="${p[1]}" r="${i===0?12:7}" fill="${i===0?'#fff':'#1f6feb'}" stroke="#1f6feb" stroke-width="4"/>`).join('');}
@@ -484,6 +540,25 @@ function renderPanel(){
     $('#stDel').onclick=()=>change(()=>{pg.streets.splice(selStreet,1);selStreet=null;},{touchDate:false});
     return;}
   const L=sel&&lotById(sel);
+  if(!L&&heat){
+    const rows=[];data.pages.forEach((p,pi)=>p.lots.forEach(l=>l.households.forEach((h,k)=>{if((h.first||h.last)&&l.status==='ward')rows.push({pi,l,h,k});})));
+    rows.sort((a,b)=>{const x=ageDays(a.h),y=ageDays(b.h);if(x===null&&y===null)return (a.h.last||'').localeCompare(b.h.last||'');if(x===null)return -1;if(y===null)return 1;return x-y;});
+    const unknown=rows.filter(r=>!r.h.added).length;
+    el.innerHTML=`<h2>Heat map</h2>
+      <p class="muted">Homes are colored by when the family moved in: <b style="color:#c62828">red</b> = newest, through orange, yellow, green and blue, to <b style="color:#5b3fb5">violet</b> = longest here. The colors update by themselves as time passes. Hover over a home to see its dates.</p>
+      <div class="status"><label><input type="radio" name="hs" value="fit" ${heatScale==='fit'?'checked':''}> Stretch colors from our newest to our oldest family</label>
+      <label><input type="radio" name="hs" value="fixed" ${heatScale==='fixed'?'checked':''}> Fixed scale: now → 10+ years</label></div>
+      <h3>Move-in dates ${unknown?`<span style="color:var(--danger)">· ${unknown} not set</span>`:''}</h3>
+      <p class="muted">Type a month for each family, like <b>3/2024</b>, <b>Mar 2024</b> or just <b>2024</b>, and press <span class="kbd">Tab</span> to go down the list. New families get today’s date automatically.</p>
+      ${rows.map((r,i)=>`<div class="row" style="margin-bottom:4px;align-items:center"><span style="flex:1.4;font-size:13px">${esc((r.h.first+' '+r.h.last).trim())}${r.h.basement?' <i class="muted">(bsmt)</i>':''}<br><small class="muted">#${esc(r.l.number?r.l.number.text:'?')} · Page ${r.pi+1}</small></span>
+        <input type="text" data-hr="${i}" value="${esc(showAdded(r.h.added))}" placeholder="3/2024" style="flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:6px;${r.h.added?'':'background:#fff8e1'}"></div>`).join('')}
+      <p class="muted" style="margin-top:12px">Exports include the colors and the color key while the heat map is on.</p>`;
+    el.querySelectorAll('input[name=hs]').forEach(r=>r.onchange=()=>{heatScale=r.value;try{localStorage.setItem('wm-heatScale',heatScale);}catch(e){}render();});
+    el.querySelectorAll('[data-hr]').forEach(inp=>inp.onchange=()=>{const r=rows[+inp.dataset.hr];const v=readDateInput(inp.value);if(v===null){inp.style.borderColor='var(--danger)';toast('Type the month like 3/2024 or Mar 2024');return;}inp.style.borderColor='';
+      change(()=>{if(v)r.h.added=v;else delete r.h.added;},{panel:false,touchDate:false});inp.value=showAdded(v);inp.style.background=v?'':'#fff8e1';});
+    el.querySelectorAll('.row').forEach((row,i)=>row.querySelector('span').style.cursor='pointer');
+    el.querySelectorAll('.row span').forEach((sp,i)=>sp.onclick=()=>{const r=rows[i];if(!isBig())cur=r.pi;else selPi=r.pi;sel=r.l.id;render();});
+    return;}
   if(!L&&isBig()){
     el.innerHTML=`<h2>Big map (both pages)</h2>
       <p class="muted">Page 1 and Page 2 joined into one landscape map. It updates by itself whenever either page changes.</p>
@@ -500,7 +575,7 @@ function renderPanel(){
       <button class="btn small" id="updToday">Set to today</button>
       <p class="muted">The date changes to today automatically whenever you edit something on this page.</p>
       <h3>How to</h3>
-      <p class="muted">• Your names are saved in your data file on this computer (Backup ▸ to switch files).<br>• <b>Click a home</b> to add, edit or remove families.<br>• <b>Drag</b> names, house numbers or street names to move them.<br>• <b>Draw lot</b> adds a new home: click each corner, then click the first corner (or press <span class="kbd">Enter</span>) to finish.<br>• Press <span class="kbd">1</span>, <span class="kbd">2</span> or <span class="kbd">3</span> (big map) to switch views, or <span class="kbd">&#96;</span> (the key left of 1) to flip between them.<br>• <b>Export PDF</b> makes the 2-page PDF or the one-page big map.<br>• <span class="kbd">Tab</span> moves to the next box when typing names.<br>• Use <b>Backup ▸ Save backup file</b> now and then to keep a copy.</p>
+      <p class="muted">• Your names are saved in your data file on this computer (Backup ▸ to switch files).<br>• <b>Click a home</b> to add, edit or remove families.<br>• <b>Drag</b> names, house numbers or street names to move them.<br>• <b>Draw lot</b> adds a new home: click each corner, then click the first corner (or press <span class="kbd">Enter</span>) to finish.<br>• Press <span class="kbd">1</span>, <span class="kbd">2</span> or <span class="kbd">3</span> (big map) to switch views, or <span class="kbd">&#96;</span> (the key left of 1) to flip between them.<br>• <b>Export PDF</b> makes the 2-page PDF or the one-page big map.<br>• <b>Heat map</b> (or <span class="kbd">H</span>) colors homes by move-in date.<br>• <span class="kbd">Tab</span> moves to the next box when typing names.<br>• Use <b>Backup ▸ Save backup file</b> now and then to keep a copy.</p>
       <h3>This page</h3><p class="muted">${pg.lots.filter(l=>l.status==='ward').length} homes in our ward · ${fams} families</p>`;
     $('#upd').onchange=e=>change(()=>{pg.updated=e.target.value||todayISO();},{touchDate:false});
     $('#updToday').onclick=()=>change(()=>{pg.updated=todayISO();},{touchDate:false});
@@ -509,6 +584,7 @@ function renderPanel(){
       <div class="field"><label>First names (e.g. “John &amp; Jane”)</label><input type="text" data-f="first" data-k="${k}" value="${esc(h.first||'')}"></div>
       <div class="field"><label>Last name</label><input type="text" data-f="last" data-k="${k}" value="${esc(h.last||'')}"></div>
       <label class="chk"><input type="checkbox" data-f="basement" data-k="${k}" ${h.basement?'checked':''}> Basement / second family (italic)</label>
+      <div class="field" style="margin-top:8px"><label>Moved into the ward${h.added?'':' (unknown)'}</label><input type="text" data-f="added" data-k="${k}" value="${esc(showAdded(h.added))}" placeholder="e.g. 3/2024, Mar 2024 or 2024"></div>
       <div class="tools">
         ${k>0?`<button class="btn small" data-act="up" data-k="${k}" title="Move up">↑</button>`:''}
         ${k<L.households.length-1?`<button class="btn small" data-act="down" data-k="${k}" title="Move down">↓</button>`:''}
@@ -538,12 +614,12 @@ function renderPanel(){
     <p class="muted" style="margin-top:16px">Tip: drag names or the house number on the map to move them.</p>`;
   el.querySelectorAll('input[data-f]').forEach(inp=>{
     const k=+inp.dataset.k,f=inp.dataset.f;
-    inp.onchange=()=>{change(()=>{const h=L.households[k];if(f==='basement')h.basement=inp.checked;else h[f]=inp.value.trim();},{panel:false});
+    inp.onchange=()=>{change(()=>{const h=L.households[k];if(f==='basement')h.basement=inp.checked;else if(f==='added'){const v=readDateInput(inp.value);if(v===null){inp.style.borderColor='var(--danger)';toast('Type the month like 3/2024 or Mar 2024');return;}inp.style.borderColor='';if(v)h.added=v;else delete h.added;}else h[f]=inp.value.trim();},{panel:false,touchDate:f!=='added'});
       if(f==='basement')inp.closest('.fam').classList.toggle('base',inp.checked);};
   });
   el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>{const k=+b.dataset.k,a=b.dataset.act;change(()=>{const H=L.households;
     if(a==='del')H.splice(k,1);else if(a==='up')[H[k-1],H[k]]=[H[k],H[k-1]];else if(a==='down')[H[k+1],H[k]]=[H[k],H[k+1]];else if(a==='attach')delete H[k].pos;});});
-  const addF=base=>change(()=>{L.households.push({first:'',last:'',basement:base});if(L.status==='none'||L.status==='w12'||L.status==='page1')L.status='ward';});
+  const addF=base=>change(()=>{L.households.push({first:'',last:'',basement:base,added:todayISO()});if(L.status==='none'||L.status==='w12'||L.status==='page1')L.status='ward';});
   $('#addFam').onclick=()=>{addF(false);focusLast();};$('#addBase').onclick=()=>{addF(true);focusLast();};
   if($('#clearFams'))$('#clearFams').onclick=()=>{if(confirm('Remove all names from this home?'))change(()=>{L.households=[];});};
   $('#numText').onchange=e=>change(()=>{const v=e.target.value.trim();if(!v){delete L.number;return;}if(!L.number||L.number.x===undefined){L.number={text:v,...autoNumber(L,page().lots)};}else L.number.text=v;},{panel:!(L.number&&L.number.x!==undefined&&e.target.value.trim())});
@@ -681,6 +757,7 @@ async function buildPdf(opts={}){
     c.push('q '+pdfPolyPath(seamPoly('B'))+' W n');c.push(`${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty} cm`);await pageOps(data.pages[1],c,xo,true);c.push('Q');
     const stOps=s=>{const size=s.size||SZ.street;return pdfText({t:s.text,x:0,y:size*0.36,size,b:false,i:false,anchor:'middle'},s.rot||0,s.x,s.y);};
     bigStreets(0).forEach(s=>c.push(stOps(s)));c.push(`q ${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty} cm`);bigStreets(1).forEach(s=>c.push(stOps(s)));c.push('Q');
+    if(heat)legendPDF(HEAT_LEGEND_BIG,c);
     c.push(pdfText({t:'Updated '+fmtDate(latestDate()),x:COMBO.upd.x,y:COMBO.upd.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
     c.push('Q');finishPage(c,xo,W,H);
   }else for(const pg of data.pages){
@@ -688,6 +765,7 @@ async function buildPdf(opts={}){
     c.push('q 0.24 0 0 -0.24 0 792 cm');
     c.push('1 g 0 0 2550 3300 re f');
     await pageOps(pg,c,xo);
+    if(heat)legendPDF(HEAT_LEGEND[data.pages.indexOf(pg)]||HEAT_LEGEND[0],c);
     const up=pg.updatedPos||{x:2506,y:3266};
     c.push(pdfText({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
     c.push('Q');finishPage(c,xo,612,792);
@@ -695,6 +773,7 @@ async function buildPdf(opts={}){
   async function pageOps(pg,c,xo,big=false){
     const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
     for(const L of lots){
+      if(heat){const hc=lotHeat(L);if(hc)c.push(`${hc.map(f2).join(' ')} rg `+pdfPolyPath(L.poly)+' f');}
       if(L.status==='w12')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
       else if(L.status==='page1')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
     }
@@ -734,12 +813,12 @@ function download(blob,name){const a=document.createElement('a');a.href=URL.crea
 const BIG_SIZES=[{label:'Big map · 17 × 11 in (tabloid)',w:17,h:11},{label:'Big map · 11 × 8.5 in (letter)',w:11,h:8.5},{label:'Big map · 24 × 18 in (poster)',w:24,h:18},{label:'Big map · 36 × 24 in (large poster)',w:36,h:24}];
 async function exportBig(i){
   const z=BIG_SIZES[i];
-  try{const blob=await buildPdf({big:z});download(blob,`${latestDate()} - Elk Ridge 15th Ward Big Map ${z.w}x${z.h}.pdf`);toast('Big map PDF saved to your Downloads folder.');}
+  try{const blob=await buildPdf({big:z});download(blob,`${latestDate()} - Elk Ridge 15th Ward Big Map ${z.w}x${z.h}${heat?' (heat map)':''}.pdf`);toast('Big map PDF saved to your Downloads folder.');}
   catch(e){console.error(e);alert('Sorry — the PDF could not be made: '+e.message);}
 }
 async function exportPdf(){
   try{const blob=await buildPdf();const latest=data.pages.map(p=>p.updated).sort().pop();
-    download(blob,`${latest} - Elk Ridge 15th Ward Map.pdf`);toast('PDF saved to your Downloads folder.');}
+    download(blob,`${latest} - Elk Ridge 15th Ward Map${heat?' (heat map)':''}.pdf`);toast('PDF saved to your Downloads folder.');}
   catch(e){console.error(e);alert('Sorry — the PDF could not be made: '+e.message+'\nYou can use Backup ▸ Print… and choose “Save as PDF” instead.');}
 }
 function printPages(){
@@ -768,7 +847,7 @@ function init(){
   window.addEventListener('beforeunload',e=>{if(fileBusy){e.preventDefault();e.returnValue='';}});
   $('#pageTabs').onclick=e=>{const b=e.target.closest('[data-page]');if(!b)return;goView(+b.dataset.page);};
   $('#modes').onclick=e=>{const b=e.target.closest('[data-mode]');if(b)setMode(b.dataset.mode);};
-  $('#undo').onclick=undo;$('#redo').onclick=redo;
+  $('#undo').onclick=undo;$('#heatBtn').onclick=()=>setHeat(!heat);$('#heatBtn').classList.toggle('primary',heat);$('#redo').onclick=redo;
   $('#zin').onclick=()=>zoom(0.8);$('#zout').onclick=()=>zoom(1.25);$('#zfit').onclick=fit;
   $('#exportPdf').onclick=()=>{$('#expMenu').classList.remove('open');exportPdf();};
   $('#bigItems').innerHTML=BIG_SIZES.map((z,i)=>`<button data-bigm="${i}">${esc(z.label)}</button>`).join('');
@@ -798,6 +877,7 @@ function init(){
     else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p'){e.preventDefault();isBig()?exportBig(0):exportPdf();}
     else if(!typing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.key==='1'||e.key==='2'||e.key==='3'||e.key==='`')){e.preventDefault();
       goView(e.key==='`'?(cur+1)%VIEWS:+e.key-1);}
+    else if(!typing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&e.key.toLowerCase()==='h'){e.preventDefault();setHeat(!heat);}
     else if(e.key==='Escape'){if(mode!=='select')setMode('select');else{sel=null;selStreet=null;render();}}
     else if(e.key==='Enter'&&mode==='draw'){finishDraw();}
     else if(e.key==='Backspace'&&mode==='draw'&&drawPts.length){drawPts.pop();render();}
