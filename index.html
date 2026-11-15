@@ -98,7 +98,13 @@ aside h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(
   <div class="spacer"></div>
   <span id="saveState"></span>
   <button class="btn" id="fileLink" style="display:none"></button>
-  <button class="btn primary" id="exportPdf">Export PDF</button>
+  <div class="menu" id="expMenu">
+    <button class="btn primary" id="exportBtn">Export PDF ▾</button>
+    <div class="items">
+      <button id="exportPdf">2-page map (Page 1 + Page 2, letter)</button>
+      <div id="bigItems"></div>
+    </div>
+  </div>
   <div class="menu" id="fileMenu">
     <button class="btn" id="fileBtn">Backup ▾</button>
     <div class="items">
@@ -136,15 +142,18 @@ const STORE_KEY = 'elkridge15-ward-map';
 const FONT = 'Helvetica, Arial, "Liberation Sans", sans-serif';
 const SZ = {name:29, num:23, street:42, tag:22, updated:26};
 const LINE_W = 7;
+const COMBO = {"s":1.098253,"tx":1711.769,"ty":-337.847,"seam":[[2207.0,-2000],[2207.0,266.0],[2209.0,609.5999755859375],[2204.0,644.0],[2209.199951171875,689.7999877929688],[2210.0,978.5999755859375],[2112.0,1013.0],[2208.300048828125,1023.0],[2210.0,1170.5],[2195.5,1200.0],[2240.300048828125,1317.0],[2243.300048828125,1952.0],[2168.0,1963.0],[2245.0,2000.0],[2244.300048828125,2273.0],[2205.0,2285.0],[2206.199951171875,2404.39990234375],[2202.199951171875,2434.300048828125],[2209.60009765625,2444.0],[2113.5,2464.10009765625],[2224.10009765625,2474.199951171875],[2024.9000244140625,2494.0],[2237.10009765625,2504.5],[2262.5,2565.0],[2226.5,2595.199951171875],[2072.5,2686.0],[2241.300048828125,2723.0],[2322.89990234375,2866.89990234375],[2335.60009765625,2895.699951171875],[2353.0,2976.0],[2191.60009765625,2982.0],[2361.5,3005.89990234375],[2400.300048828125,3185.0],[2400.300048828125,6000]],"box":{"x":0,"y":-340,"w":4516,"h":3640},"upd":{"x":4271,"y":3234}}; // how page 2 lines up with page 1 on the big map
+const VIEWS = 3;
 
 // ---------- state ----------
-let data, cur = 0, mode = 'select', sel = null, selStreet = null, matches = new Set();
+let selPi = 0, data, cur = 0, mode = 'select', sel = null, selStreet = null, matches = new Set();
 let undoStack = [], redoStack = [];
 let view = {x:0,y:0,w:2550,h:3300};
 let drawPts = [];
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const page = () => data.pages[cur];
+const page = () => data.pages[cur<2?cur:selPi];
+const isBig = () => cur===2;
 const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- dates ----------
@@ -301,10 +310,29 @@ function arrowSVG(a){const ang=Math.atan2(a.y2-a.y1,a.x2-a.x1);const L=16,W=8;
   return `<line x1="${a.x1}" y1="${a.y1}" x2="${a.x2}" y2="${a.y2}" stroke="#000" stroke-width="3"/><path d="M${a.x2} ${a.y2}L${p1[0]} ${p1[1]}L${p2[0]} ${p2[1]}Z"/>`;}
 function numberRun(n){return {t:n.text,size:n.size||SZ.num,b:false,i:false};}
 function pageSVG(pg,{interactive=true}={}){
-  const o=[];
-  o.push(`<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="22" height="22" patternTransform="rotate(45)"><rect width="22" height="22" fill="#fff"/><line x1="0" y1="0" x2="0" y2="22" stroke="#9aa0a6" stroke-width="3"/></pattern></defs>`);
-  o.push(`<rect x="0" y="0" width="2550" height="3300" fill="#fff"/>`);
-  for(const L of pg.lots){
+  const up=pg.updatedPos||{x:2506,y:3266};
+  return `<rect x="0" y="0" width="2550" height="3300" fill="#fff"/>`+pageBody(pg,interactive)+
+    `<g style="font-family:${FONT.replace(/"/g,"'")}">`+runSVG({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'})+'</g>';
+}
+function latestDate(){return data.pages.map(p=>p.updated).sort().pop();}
+function seamPoly(side){const S=COMBO.seam,far=side==='A'?-9000:9000;return [[far,S[0][1]],...S,[far,S[S.length-1][1]]];}
+function bigSVG({interactive=true}={}){
+  const B=COMBO.box;
+  return `<defs><clipPath id="clipA" clipPathUnits="userSpaceOnUse"><path d="${polyPath(seamPoly('A'))}"/></clipPath><clipPath id="clipB" clipPathUnits="userSpaceOnUse"><path d="${polyPath(seamPoly('B'))}"/></clipPath></defs>`+
+    `<rect x="${B.x}" y="${B.y}" width="${B.w}" height="${B.h}" fill="#fff"/>`+
+    `<g clip-path="url(#clipA)">${pageBody(data.pages[0],interactive,true)}</g>`+
+    `<g clip-path="url(#clipB)"><g transform="matrix(${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty})">${pageBody(data.pages[1],interactive,true)}</g></g>`+
+    `<g style="font-family:${FONT.replace(/"/g,"'")}">${bigStreets(0).map(s=>streetSVG(s,-1,false)).join('')}<g transform="matrix(${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty})">${bigStreets(1).map(s=>streetSVG(s,-1,false)).join('')}</g></g>`+
+    `<g style="font-family:${FONT.replace(/"/g,"'")}">`+runSVG({t:'Updated '+fmtDate(latestDate()),x:COMBO.upd.x,y:COMBO.upd.y,size:SZ.updated,b:false,i:false,anchor:'end'})+'</g>';
+}
+function seamX(y){const S=COMBO.seam;for(let i=1;i<S.length;i++){if(y<=S[i][1]){const a=S[i-1],b=S[i];return a[0]+(b[0]-a[0])*(y-a[1])/((b[1]-a[1])||1);}}return S[S.length-1][0];}
+function bigStreets(pi){const pg=data.pages[pi];return pg.streets.filter(s=>{const X=pi?s.x*COMBO.s+COMBO.tx:s.x,Y=pi?s.y*COMBO.s+COMBO.ty:s.y;return pi?X>seamX(Y):X<seamX(Y);});}
+function streetSVG(s,k,interactive){return `<g transform="translate(${s.x} ${s.y}) rotate(${s.rot||0})" ${interactive?`class="drag" data-drag="street" data-k="${k}"`:''}>`+
+      (interactive&&selStreet===k?`<rect x="${-textW(s.text,s.size||SZ.street,false)/2-8}" y="${-(s.size||SZ.street)*0.6}" width="${textW(s.text,s.size||SZ.street,false)+16}" height="${(s.size||SZ.street)*1.2}" fill="rgba(31,111,235,.12)" stroke="#1f6feb" stroke-width="3"/>`:'')+
+      runSVG({t:s.text,x:0,y:(s.size||SZ.street)*0.36,size:s.size||SZ.street,b:false,i:false})+`</g>`;}
+function pageBody(pg,interactive,big=false){
+  const o=[];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
+  for(const L of lots){
     if(L.status==='w12')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
     else if(L.status==='page1')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
   }
@@ -313,16 +341,16 @@ function pageSVG(pg,{interactive=true}={}){
     o.push(`<g fill="none" stroke="#3a6f99" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">${w.waves.map(v=>`<polyline points="${v.map(q=>q.join(',')).join(' ')}"/>`).join('')}</g>`);
     o.push(`<path d="${polyPath(w.poly)}" fill="none" stroke="#000" stroke-width="${LINE_W}" stroke-linejoin="round"/>`);}
   o.push(pg.artStroke?`<path d="${pg.art}" fill="none" stroke="#000" stroke-width="${LINE_W}" stroke-linejoin="round" stroke-linecap="round"/>`:`<path d="${pg.art}" fill="#000" fill-rule="evenodd"/>`);
-  const drawn=pg.lots.filter(l=>l.drawn);
+  const drawn=lots.filter(l=>l.drawn);
   if(drawn.length)o.push(`<g fill="none" stroke="#000" stroke-width="${LINE_W}" stroke-linejoin="round" stroke-linecap="round">${drawn.map(l=>`<path d="${polyPath(l.poly)}"/>`).join('')}</g>`);
   o.push(`<g style="font-family:${FONT.replace(/"/g,"'")}">`);
   // lot hit areas + highlights
   if(interactive){
-    for(const L of pg.lots){if(matches.has(L))o.push(`<path class="match" d="${polyPath(L.poly)}"/>`);}
-    for(const L of pg.lots)o.push(`<path class="lot" data-lot="${L.id}" d="${polyPath(L.poly)}"/>`);
-    if(sel){const L=pg.lots.find(l=>l.id===sel);if(L)o.push(`<path class="sel" d="${polyPath(L.poly)}"/>`);}
+    for(const L of lots){if(matches.has(L))o.push(`<path class="match" d="${polyPath(L.poly)}"/>`);}
+    for(const L of lots)o.push(`<path class="lot" data-lot="${L.id}" d="${polyPath(L.poly)}"/>`);
+    if(sel){const L=lots.find(l=>l.id===sel);if(L)o.push(`<path class="sel" d="${polyPath(L.poly)}"/>`);}
   }
-  for(const L of pg.lots){
+  for(const L of lots){
     const {runs,arrows,box}=layoutLot(L);
     const mainRuns=runs.filter(r=>r.det===undefined);
     if(interactive&&box)o.push(`<g class="drag" data-drag="label" data-lot="${L.id}">`);else o.push('<g>');
@@ -334,29 +362,25 @@ function pageSVG(pg,{interactive=true}={}){
     if(L.number&&L.number.text){const n=L.number;const r=numberRun(n);
       o.push(`<g transform="translate(${n.x} ${n.y}) rotate(${n.rot||0})" ${interactive?`class="drag" data-drag="num" data-lot="${L.id}"`:''}>${runSVG({...r,x:0,y:r.size*0.36})}</g>`);}
   }
-  pg.streets.forEach((s,k)=>{
-    o.push(`<g transform="translate(${s.x} ${s.y}) rotate(${s.rot||0})" ${interactive?`class="drag" data-drag="street" data-k="${k}"`:''}>`+
-      (interactive&&selStreet===k?`<rect x="${-textW(s.text,s.size||SZ.street,false)/2-8}" y="${-(s.size||SZ.street)*0.6}" width="${textW(s.text,s.size||SZ.street,false)+16}" height="${(s.size||SZ.street)*1.2}" fill="rgba(31,111,235,.12)" stroke="#1f6feb" stroke-width="3"/>`:'')+
-      runSVG({t:s.text,x:0,y:(s.size||SZ.street)*0.36,size:s.size||SZ.street,b:false,i:false})+`</g>`);
-  });
-  const up=pg.updatedPos||{x:2506,y:3266};
-  o.push(runSVG({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
+  if(!big)pg.streets.forEach((s,k)=>o.push(streetSVG(s,k,interactive)));
   o.push('</g>');
   return o.join('');
 }
 
 // ---------- main render ----------
-function render(){
+function render({panel=true}={}){
   const svg=$('#map');
   svg.setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);
   let extra='';
   if(mode==='draw'&&drawPts.length){extra=`<polyline points="${drawPts.map(p=>p.join(',')).join(' ')}" fill="rgba(31,111,235,.1)" stroke="#1f6feb" stroke-width="5" stroke-dasharray="14 8"/>`+drawPts.map((p,i)=>`<circle cx="${p[0]}" cy="${p[1]}" r="${i===0?12:7}" fill="${i===0?'#fff':'#1f6feb'}" stroke="#1f6feb" stroke-width="4"/>`).join('');}
-  svg.innerHTML=`<rect x="-5000" y="-5000" width="12550" height="13300" fill="#e9ecef" data-bg="1"/><rect x="8" y="12" width="2550" height="3300" fill="rgba(0,0,0,.08)"/>`+pageSVG(page())+`<g id="rubber"></g>`+extra;
-  renderTabs();renderPanel();
+  const fb=frame();
+  svg.innerHTML=`<rect x="-9000" y="-9000" width="24000" height="24000" fill="#e9ecef" data-bg="1"/><rect x="${fb.x+8}" y="${fb.y+12}" width="${fb.w}" height="${fb.h}" fill="rgba(0,0,0,.08)"/>`+(isBig()?bigSVG():pageSVG(page()))+`<g id="rubber"></g>`+extra;
+  renderTabs();if(panel)renderPanel();
   $('#undo').disabled=!undoStack.length;$('#redo').disabled=!redoStack.length;
 }
 function renderTabs(){
-  $('#pageTabs').innerHTML=data.pages.map((p,i)=>`<button class="${i===cur?'on':''}" data-page="${i}" title="${esc(p.name)} (press ${i+1})">Page ${i+1}</button>`).join('');
+  $('#pageTabs').innerHTML=data.pages.map((p,i)=>`<button class="${i===cur?'on':''}" data-page="${i}" title="${esc(p.name)} (press ${i+1})">Page ${i+1}</button>`).join('')+
+    `<button class="${cur===2?'on':''}" data-page="2" title="Both pages together as one landscape map (press 3)">Big map</button>`;
 }
 
 // ---------- persistence & undo ----------
@@ -432,11 +456,11 @@ async function initFile(){
 }
 function snapshot(){return JSON.stringify(data.pages.map(p=>({...p,art:undefined,images:undefined,water:undefined})));}
 function restore(s){const arr=JSON.parse(s);arr.forEach((p,i)=>{p.art=data.pages[i].art;p.images=data.pages[i].images;p.water=data.pages[i].water;});data.pages=arr;}
-function change(fn,{touchDate=true}={}){
+function change(fn,{touchDate=true,panel=true}={}){
   undoStack.push(snapshot());if(undoStack.length>80)undoStack.shift();redoStack=[];
   fn();
   if(touchDate)page().updated=todayISO();
-  persist();render();
+  persist();render({panel});
 }
 function undo(){if(!undoStack.length)return;redoStack.push(snapshot());restore(undoStack.pop());persist();render();}
 function redo(){if(!redoStack.length)return;undoStack.push(snapshot());restore(redoStack.pop());persist();render();}
@@ -453,13 +477,22 @@ function renderPanel(){
       <div class="row"><button class="btn small" data-rot="-90">Vertical ↑</button><button class="btn small" data-rot="0">Flat</button><button class="btn small" data-rot="90">Vertical ↓</button></div>
       <p class="muted">Drag the street name on the map to move it.</p>
       <button class="btn danger" id="stDel">Delete street name</button>`;
-    $('#stText').onchange=e=>change(()=>{s.text=e.target.value;},{touchDate:false});
+    $('#stText').onchange=e=>change(()=>{s.text=e.target.value;},{touchDate:false,panel:false});
     $('#stRot').oninput=e=>{s.rot=+e.target.value;render();};
     $('#stRot').onchange=e=>{const v=+e.target.value;change(()=>{s.rot=v;},{touchDate:false});};
     el.querySelectorAll('[data-rot]').forEach(b=>b.onclick=()=>change(()=>{s.rot=+b.dataset.rot;},{touchDate:false}));
     $('#stDel').onclick=()=>change(()=>{pg.streets.splice(selStreet,1);selStreet=null;},{touchDate:false});
     return;}
   const L=sel&&lotById(sel);
+  if(!L&&isBig()){
+    el.innerHTML=`<h2>Big map (both pages)</h2>
+      <p class="muted">Page 1 and Page 2 joined into one landscape map. It updates by itself whenever either page changes.</p>
+      <p class="muted">Click a home to edit its families here. To move labels or draw new lots, switch to Page 1 or 2.</p>
+      <h3>Export the big map</h3>
+      ${BIG_SIZES.map((z,i)=>`<button class="btn" data-big="${i}" style="width:100%;margin-bottom:6px;text-align:left">${esc(z.label)}</button>`).join('')}
+      <p class="muted">It’s a sharp vector PDF, so any size prints cleanly. The printed “Updated” date is the newer of the two pages (${fmtDate(latestDate())}).</p>`;
+    el.querySelectorAll('[data-big]').forEach(b=>b.onclick=()=>exportBig(+b.dataset.big));
+    return;}
   if(!L){
     const fams=pg.lots.reduce((t,l)=>t+l.households.filter(h=>h.first||h.last).length,0);
     el.innerHTML=`<h2>${esc(pg.name)}</h2>
@@ -467,7 +500,7 @@ function renderPanel(){
       <button class="btn small" id="updToday">Set to today</button>
       <p class="muted">The date changes to today automatically whenever you edit something on this page.</p>
       <h3>How to</h3>
-      <p class="muted">• Your names are saved in your data file on this computer (Backup ▸ to switch files).<br>• <b>Click a home</b> to add, edit or remove families.<br>• <b>Drag</b> names, house numbers or street names to move them.<br>• <b>Draw lot</b> adds a new home: click each corner, then click the first corner (or press <span class="kbd">Enter</span>) to finish.<br>• Press <span class="kbd">1</span> or <span class="kbd">2</span> to jump to a page, or <span class="kbd">&#96;</span> (the key left of 1) to flip between them.<br>• <b>Export PDF</b> makes the 2-page PDF for leadership.<br>• Use <b>Backup ▸ Save backup file</b> now and then to keep a copy.</p>
+      <p class="muted">• Your names are saved in your data file on this computer (Backup ▸ to switch files).<br>• <b>Click a home</b> to add, edit or remove families.<br>• <b>Drag</b> names, house numbers or street names to move them.<br>• <b>Draw lot</b> adds a new home: click each corner, then click the first corner (or press <span class="kbd">Enter</span>) to finish.<br>• Press <span class="kbd">1</span>, <span class="kbd">2</span> or <span class="kbd">3</span> (big map) to switch views, or <span class="kbd">&#96;</span> (the key left of 1) to flip between them.<br>• <b>Export PDF</b> makes the 2-page PDF or the one-page big map.<br>• <span class="kbd">Tab</span> moves to the next box when typing names.<br>• Use <b>Backup ▸ Save backup file</b> now and then to keep a copy.</p>
       <h3>This page</h3><p class="muted">${pg.lots.filter(l=>l.status==='ward').length} homes in our ward · ${fams} families</p>`;
     $('#upd').onchange=e=>change(()=>{pg.updated=e.target.value||todayISO();},{touchDate:false});
     $('#updToday').onclick=()=>change(()=>{pg.updated=todayISO();},{touchDate:false});
@@ -505,14 +538,15 @@ function renderPanel(){
     <p class="muted" style="margin-top:16px">Tip: drag names or the house number on the map to move them.</p>`;
   el.querySelectorAll('input[data-f]').forEach(inp=>{
     const k=+inp.dataset.k,f=inp.dataset.f;
-    inp.onchange=()=>change(()=>{const h=L.households[k];if(f==='basement')h.basement=inp.checked;else h[f]=inp.value.trim();});
+    inp.onchange=()=>{change(()=>{const h=L.households[k];if(f==='basement')h.basement=inp.checked;else h[f]=inp.value.trim();},{panel:false});
+      if(f==='basement')inp.closest('.fam').classList.toggle('base',inp.checked);};
   });
   el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>{const k=+b.dataset.k,a=b.dataset.act;change(()=>{const H=L.households;
     if(a==='del')H.splice(k,1);else if(a==='up')[H[k-1],H[k]]=[H[k],H[k-1]];else if(a==='down')[H[k+1],H[k]]=[H[k],H[k+1]];else if(a==='attach')delete H[k].pos;});});
   const addF=base=>change(()=>{L.households.push({first:'',last:'',basement:base});if(L.status==='none'||L.status==='w12'||L.status==='page1')L.status='ward';});
   $('#addFam').onclick=()=>{addF(false);focusLast();};$('#addBase').onclick=()=>{addF(true);focusLast();};
   if($('#clearFams'))$('#clearFams').onclick=()=>{if(confirm('Remove all names from this home?'))change(()=>{L.households=[];});};
-  $('#numText').onchange=e=>change(()=>{const v=e.target.value.trim();if(!v){delete L.number;return;}if(!L.number||L.number.x===undefined){L.number={text:v,...autoNumber(L,page().lots)};}else L.number.text=v;});
+  $('#numText').onchange=e=>change(()=>{const v=e.target.value.trim();if(!v){delete L.number;return;}if(!L.number||L.number.x===undefined){L.number={text:v,...autoNumber(L,page().lots)};}else L.number.text=v;},{panel:!(L.number&&L.number.x!==undefined&&e.target.value.trim())});
   if($('#numRot')){$('#numRot').oninput=e=>{L.number.rot=+e.target.value;render();};$('#numRot').onchange=e=>{const v=+e.target.value;change(()=>{L.number.rot=v;});};
     $('#numAuto').onclick=()=>change(()=>{Object.assign(L.number,autoNumber(L,page().lots));});}
   el.querySelectorAll('input[name=st]').forEach(r=>r.onchange=()=>change(()=>{L.status=r.value;}));
@@ -525,7 +559,10 @@ function focusLast(){const ins=[...document.querySelectorAll('input[data-f=first
 
 // ---------- pan / zoom / interaction ----------
 function svgPt(ev){const svg=$('#map');const p=svg.createSVGPoint();p.x=ev.clientX;p.y=ev.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());}
-function fit(){const r=$('#stage').getBoundingClientRect();const pad=40;const s=Math.max(2550/(r.width-pad),3300/(r.height-pad));view.w=r.width*s;view.h=r.height*s;view.x=1275-view.w/2;view.y=1650-view.h/2;render();}
+function frame(){return isBig()?COMBO.box:{x:0,y:0,w:2550,h:3300};}
+function fit(){const r=$('#stage').getBoundingClientRect();const pad=40;const f=frame();const s=Math.max(f.w/(r.width-pad),f.h/(r.height-pad));view.w=r.width*s;view.h=r.height*s;view.x=f.x+f.w/2-view.w/2;view.y=f.y+f.h/2-view.h/2;render();}
+function goView(t){if(t===cur)return;cur=t;sel=null;selStreet=null;drawPts=[];if(isBig()&&mode!=='select')setMode('select');doSearch($('#search').value);fit();}
+function pageOfLot(id){return data.pages.findIndex(p=>p.lots.some(l=>l.id===id));}
 function zoom(f,cx,cy){if(cx===undefined){cx=view.x+view.w/2;cy=view.y+view.h/2;}const nw=Math.max(300,Math.min(12000,view.w*f));const k=nw/view.w;view.x=cx-(cx-view.x)*k;view.y=cy-(cy-view.y)*k;view.w*=k;view.h*=k;$('#map').setAttribute('viewBox',`${view.x} ${view.y} ${view.w} ${view.h}`);}
 function snapPoint(p){const pg=page();const tol=view.w/120;let best=null;
   for(const L of pg.lots)for(const q of L.poly){const d=Math.hypot(q[0]-p.x,q[1]-p.y);if(d<tol&&(!best||d<best[0]))best=[d,q[0],q[1]];}
@@ -537,7 +574,7 @@ function finishDraw(){
   change(()=>{const id='u'+Date.now().toString(36);page().lots.push({id,poly,households:[],status:'ward',drawn:true});sel=id;});
   setMode('select');toast('New lot added — type its house number on the right.');setTimeout(()=>{const n=$('#numText');if(n)n.focus();},50);
 }
-function setMode(m){mode=m;drawPts=[];document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+function setMode(m){if(isBig()&&m!=='select'){toast('Switch to Page 1 or Page 2 to draw lots or add street names.');m='select';}mode=m;drawPts=[];document.querySelectorAll('#modes button').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
   $('#stage').classList.toggle('drawing',m!=='select');
   const h=$('#hint');h.style.display=m==='select'?'none':'block';
   h.textContent=m==='draw'?'Click each corner of the new lot. Click the first corner or press Enter to finish. Esc cancels. Corners snap to nearby lot corners.':'Click where the street name should go.';
@@ -548,6 +585,7 @@ function onDown(ev){
   if(ev.button===1||ev.button===2||(ev.button===0&&ev.shiftKey)){startPan(ev);return;}
   if(ev.button!==0)return;
   const p=svgPt(ev);
+  if(isBig()){const t=ev.target.closest('[data-lot]');if(t){sel=t.dataset.lot;selPi=Math.max(0,pageOfLot(sel));selStreet=null;render();return;}startPan(ev);return;}
   if(mode==='draw'){const s=snapPoint(p);if(s.close){finishDraw();return;}drawPts.push([s.x,s.y]);render();return;}
   if(mode==='street'){const t=prompt('Street name:','');setMode('select');if(t&&t.trim())change(()=>{page().streets.push({text:t.trim(),x:Math.round(p.x),y:Math.round(p.y),rot:0});selStreet=page().streets.length-1;sel=null;},{touchDate:false});return;}
   const g=ev.target.closest('[data-drag]');
@@ -591,11 +629,11 @@ function doSearch(q){
     L.households.forEach(h=>{const s=`${h.first} ${h.last}`.toLowerCase();if(s.includes(q))res.push({pi,L,label:`${h.first} ${h.last}`.trim(),num});});
     if(num&&num===q)res.push({pi,L,label:'House #'+num,num});
   }));
-  for(const r of res)if(r.pi===cur)matches.add(r.L);
+  for(const r of res)if(r.pi===cur||isBig())matches.add(r.L);
   box.innerHTML=res.length?res.slice(0,60).map((r,i)=>`<div data-i="${i}">${esc(r.label)} <small>· Page ${r.pi+1}${r.num?' · #'+esc(r.num):''}</small></div>`).join(''):'<div class="muted">No matches</div>';
   box.style.display='block';
-  box.querySelectorAll('[data-i]').forEach(d=>d.onclick=()=>{const r=res[+d.dataset.i];cur=r.pi;sel=r.L.id;selStreet=null;box.style.display='none';
-    matches=new Set([r.L]);const b=bbox(r.L.poly);const cx=(b.x0+b.x1)/2,cy=(b.y0+b.y1)/2;const k=Math.min(1,900/view.w);view.w*=k;view.h*=k;view.x=cx-view.w/2;view.y=cy-view.h/2;render();});
+  box.querySelectorAll('[data-i]').forEach(d=>d.onclick=()=>{const r=res[+d.dataset.i];if(isBig())selPi=r.pi;else cur=r.pi;sel=r.L.id;selStreet=null;box.style.display='none';
+    matches=new Set([r.L]);const b=bbox(r.L.poly);let cx=(b.x0+b.x1)/2,cy=(b.y0+b.y1)/2;if(isBig()&&r.pi===1){cx=cx*COMBO.s+COMBO.tx;cy=cy*COMBO.s+COMBO.ty;}const k=Math.min(1,900/view.w);view.w*=k;view.h*=k;view.x=cx-view.w/2;view.y=cy-view.h/2;render();});
   render();
 }
 
@@ -624,31 +662,53 @@ async function imageToPdf(im){
   const z=async u=>{if(typeof CompressionStream==='undefined')return {d:u,f:''};const s=new Blob([u]).stream().pipeThrough(new CompressionStream('deflate'));return {d:new Uint8Array(await new Response(s).arrayBuffer()),f:'/Filter /FlateDecode '};};
   return {w:cv.width,h:cv.height,rgb:await z(rgb),a:await z(a)};
 }
-async function buildPdf(){
+async function buildPdf(opts={}){
   const objs=[];const add=o=>{objs.push(o);return objs.length;};
   const enc=new TextEncoder();const latin=s=>{const u=new Uint8Array(s.length);for(let i=0;i<s.length;i++)u[i]=s.charCodeAt(i)&255;return u;};
   const fonts={F1:'Helvetica',F2:'Helvetica-Bold',F3:'Helvetica-Oblique',F4:'Helvetica-BoldOblique'};
   const fontIds={};for(const k in fonts)fontIds[k]=add(`<< /Type /Font /Subtype /Type1 /BaseFont /${fonts[k]} /Encoding /WinAnsiEncoding >>`);
   const pagesId=add(null);const pageIds=[];
-  for(const pg of data.pages){
+  const fontRes=()=>`/Font << ${Object.keys(fontIds).map(k=>`/${k} ${fontIds[k]} 0 R`).join(' ')} >>`;
+  const finishPage=(c,xo,W,H)=>{const content=latin(c.join('\n'));const cid=add({dict:`<< /Length ${content.length} >>`,data:content});
+    const xs=Object.keys(xo).map(k=>`/${k} ${xo[k]} 0 R`).join(' ');
+    pageIds.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${f2(W)} ${f2(H)}] /Resources << ${fontRes()} ${xs?`/XObject << ${xs} >>`:''} >> /Contents ${cid} 0 R >>`));};
+  if(opts.big){
+    const z=opts.big,W=z.w*72,H=z.h*72,m=0.35*72,B=COMBO.box;const k=Math.min((W-2*m)/B.w,(H-2*m)/B.h);
+    const ox=(W-B.w*k)/2,oy=(H-B.h*k)/2;const xo={};const c=[];
+    c.push(`q ${f2(k)} 0 0 ${f2(-k)} ${f2(ox-B.x*k)} ${f2(H-oy+B.y*k)} cm`);
+    c.push(`1 g ${B.x} ${B.y} ${B.w} ${B.h} re f`);
+    c.push('q '+pdfPolyPath(seamPoly('A'))+' W n');await pageOps(data.pages[0],c,xo,true);c.push('Q');
+    c.push('q '+pdfPolyPath(seamPoly('B'))+' W n');c.push(`${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty} cm`);await pageOps(data.pages[1],c,xo,true);c.push('Q');
+    const stOps=s=>{const size=s.size||SZ.street;return pdfText({t:s.text,x:0,y:size*0.36,size,b:false,i:false,anchor:'middle'},s.rot||0,s.x,s.y);};
+    bigStreets(0).forEach(s=>c.push(stOps(s)));c.push(`q ${COMBO.s} 0 0 ${COMBO.s} ${COMBO.tx} ${COMBO.ty} cm`);bigStreets(1).forEach(s=>c.push(stOps(s)));c.push('Q');
+    c.push(pdfText({t:'Updated '+fmtDate(latestDate()),x:COMBO.upd.x,y:COMBO.upd.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
+    c.push('Q');finishPage(c,xo,W,H);
+  }else for(const pg of data.pages){
     const xo={};const c=[];
     c.push('q 0.24 0 0 -0.24 0 792 cm');
     c.push('1 g 0 0 2550 3300 re f');
-    for(const L of pg.lots){
+    await pageOps(pg,c,xo);
+    const up=pg.updatedPos||{x:2506,y:3266};
+    c.push(pdfText({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
+    c.push('Q');finishPage(c,xo,612,792);
+  }
+  async function pageOps(pg,c,xo,big=false){
+    const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
+    for(const L of lots){
       if(L.status==='w12')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
       else if(L.status==='page1')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
     }
     let ii=0;for(const im of pg.images||[]){const d=await imageToPdf(im);ii++;
       const sm=add({dict:`<< /Type /XObject /Subtype /Image /Width ${d.w} /Height ${d.h} /ColorSpace /DeviceGray /BitsPerComponent 8 ${d.a.f}/Length ${d.a.d.length} >>`,data:d.a.d});
       const id=add({dict:`<< /Type /XObject /Subtype /Image /Width ${d.w} /Height ${d.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /SMask ${sm} 0 R ${d.rgb.f}/Length ${d.rgb.d.length} >>`,data:d.rgb.d});
-      xo['Im'+ii]=id;c.push(`q ${im.w} 0 0 ${-im.h} ${im.x} ${im.y+im.h} cm /Im${ii} Do Q`);}
+      xo['Im'+(pg.id||'')+ii]=id;c.push(`q ${im.w} 0 0 ${-im.h} ${im.x} ${im.y+im.h} cm /Im${pg.id||''}${ii} Do Q`);}
     for(const w of pg.water||[]){c.push('0.843 0.914 0.969 rg '+pdfPolyPath(w.poly)+' f');
       c.push('0.227 0.435 0.6 RG 4 w 1 j 1 J');for(const v of w.waves)c.push(v.map((q,i)=>`${f2(q[0])} ${f2(q[1])} ${i?'l':'m'}`).join(' ')+' S');
       c.push(`0 G ${LINE_W} w `+pdfPolyPath(w.poly)+' S');}
     c.push(pg.artStroke?`0 G ${LINE_W} w 1 j 1 J `+svgPathToPdf(pg.art)+' S':'0 g '+svgPathToPdf(pg.art)+' f*');
-    const drawn=pg.lots.filter(l=>l.drawn);
+    const drawn=lots.filter(l=>l.drawn);
     if(drawn.length){c.push(`0 G ${LINE_W} w 1 j 1 J`);for(const L of drawn)c.push(pdfPolyPath(L.poly)+' S');}
-    for(const L of pg.lots){
+    for(const L of lots){
       const {runs,arrows}=layoutLot(L);
       for(const r of runs)c.push(pdfText(r));
       for(const a of arrows){const ang=Math.atan2(a.y2-a.y1,a.x2-a.x1);const Ln=16,W=8;
@@ -656,14 +716,7 @@ async function buildPdf(){
         c.push(`0 g ${f2(a.x2)} ${f2(a.y2)} m ${f2(a.x2-Ln*Math.cos(ang)+W*Math.sin(ang))} ${f2(a.y2-Ln*Math.sin(ang)-W*Math.cos(ang))} l ${f2(a.x2-Ln*Math.cos(ang)-W*Math.sin(ang))} ${f2(a.y2-Ln*Math.sin(ang)+W*Math.cos(ang))} l h f`);}
       if(L.number&&L.number.text){const n=L.number;const r=numberRun(n);c.push(pdfText({...r,x:0,y:r.size*0.36,anchor:'middle'},n.rot||0,n.x,n.y));}
     }
-    for(const s of pg.streets){const size=s.size||SZ.street;c.push(pdfText({t:s.text,x:0,y:size*0.36,size,b:false,i:false,anchor:'middle'},s.rot||0,s.x,s.y));}
-    const up=pg.updatedPos||{x:2506,y:3266};
-    c.push(pdfText({t:'Updated '+fmtDate(pg.updated),x:up.x,y:up.y,size:SZ.updated,b:false,i:false,anchor:'end'}));
-    c.push('Q');
-    const content=latin(c.join('\n'));
-    const cid=add({dict:`<< /Length ${content.length} >>`,data:content});
-    const xs=Object.keys(xo).map(k=>`/${k} ${xo[k]} 0 R`).join(' ');
-    pageIds.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Resources << /Font << ${Object.keys(fontIds).map(k=>`/${k} ${fontIds[k]} 0 R`).join(' ')} >> ${xs?`/XObject << ${xs} >>`:''} >> /Contents ${cid} 0 R >>`));
+    if(!big)for(const s of pg.streets){const size=s.size||SZ.street;c.push(pdfText({t:s.text,x:0,y:size*0.36,size,b:false,i:false,anchor:'middle'},s.rot||0,s.x,s.y));}
   }
   objs[pagesId-1]=`<< /Type /Pages /Kids [${pageIds.map(i=>i+' 0 R').join(' ')}] /Count ${pageIds.length} >>`;
   const catId=add(`<< /Type /Catalog /Pages ${pagesId} 0 R >>`);
@@ -678,6 +731,12 @@ async function buildPdf(){
   return new Blob(chunks,{type:'application/pdf'});
 }
 function download(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);}
+const BIG_SIZES=[{label:'Big map · 17 × 11 in (tabloid)',w:17,h:11},{label:'Big map · 11 × 8.5 in (letter)',w:11,h:8.5},{label:'Big map · 24 × 18 in (poster)',w:24,h:18},{label:'Big map · 36 × 24 in (large poster)',w:36,h:24}];
+async function exportBig(i){
+  const z=BIG_SIZES[i];
+  try{const blob=await buildPdf({big:z});download(blob,`${latestDate()} - Elk Ridge 15th Ward Big Map ${z.w}x${z.h}.pdf`);toast('Big map PDF saved to your Downloads folder.');}
+  catch(e){console.error(e);alert('Sorry — the PDF could not be made: '+e.message);}
+}
 async function exportPdf(){
   try{const blob=await buildPdf();const latest=data.pages.map(p=>p.updated).sort().pop();
     download(blob,`${latest} - Elk Ridge 15th Ward Map.pdf`);toast('PDF saved to your Downloads folder.');}
@@ -707,13 +766,16 @@ function init(){
   initFile();
   $('#fileLink').onclick=linkFile;
   window.addEventListener('beforeunload',e=>{if(fileBusy){e.preventDefault();e.returnValue='';}});
-  $('#pageTabs').onclick=e=>{const b=e.target.closest('[data-page]');if(!b)return;cur=+b.dataset.page;sel=null;selStreet=null;drawPts=[];doSearch($('#search').value);fit();};
+  $('#pageTabs').onclick=e=>{const b=e.target.closest('[data-page]');if(!b)return;goView(+b.dataset.page);};
   $('#modes').onclick=e=>{const b=e.target.closest('[data-mode]');if(b)setMode(b.dataset.mode);};
   $('#undo').onclick=undo;$('#redo').onclick=redo;
   $('#zin').onclick=()=>zoom(0.8);$('#zout').onclick=()=>zoom(1.25);$('#zfit').onclick=fit;
-  $('#exportPdf').onclick=exportPdf;$('#printBtn').onclick=()=>{$('#fileMenu').classList.remove('open');printPages();};
+  $('#exportPdf').onclick=()=>{$('#expMenu').classList.remove('open');exportPdf();};
+  $('#bigItems').innerHTML=BIG_SIZES.map((z,i)=>`<button data-bigm="${i}">${esc(z.label)}</button>`).join('');
+  $('#bigItems').querySelectorAll('[data-bigm]').forEach(b=>b.onclick=()=>{$('#expMenu').classList.remove('open');exportBig(+b.dataset.bigm);});
+  $('#exportBtn').onclick=e=>{e.stopPropagation();$('#fileMenu').classList.remove('open');$('#expMenu').classList.toggle('open');};$('#printBtn').onclick=()=>{$('#fileMenu').classList.remove('open');printPages();};
   $('#fileBtn').onclick=e=>{e.stopPropagation();$('#fileMenu').classList.toggle('open');};
-  document.addEventListener('click',e=>{if(!e.target.closest('#fileMenu'))$('#fileMenu').classList.remove('open');if(!e.target.closest('#searchWrap'))$('#results').style.display='none';});
+  document.addEventListener('click',e=>{if(!e.target.closest('#fileMenu'))$('#fileMenu').classList.remove('open');if(!e.target.closest('#expMenu'))$('#expMenu').classList.remove('open');if(!e.target.closest('#searchWrap'))$('#results').style.display='none';});
   $('#saveBackup').onclick=()=>{$('#fileMenu').classList.remove('open');saveBackup();};
   $('#openBackup').onclick=()=>{$('#fileMenu').classList.remove('open');$('#fileInput').click();};
   $('#fileInput').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());if(confirm('Replace the current map with this backup?'))loadData(d);toast('Backup opened.');}catch(err){alert(err.message);}e.target.value='';};
@@ -733,10 +795,9 @@ function init(){
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'&&!typing){e.preventDefault();e.shiftKey?redo():undo();}
     else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'&&!typing){e.preventDefault();redo();}
     else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();saveBackup();}
-    else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p'){e.preventDefault();exportPdf();}
-    else if(!typing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.key==='1'||e.key==='2'||e.key==='`')){e.preventDefault();
-      const t=e.key==='`'?(cur+1)%data.pages.length:Math.min(+e.key-1,data.pages.length-1);
-      if(t!==cur){cur=t;sel=null;selStreet=null;drawPts=[];doSearch($('#search').value);fit();}}
+    else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p'){e.preventDefault();isBig()?exportBig(0):exportPdf();}
+    else if(!typing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&(e.key==='1'||e.key==='2'||e.key==='3'||e.key==='`')){e.preventDefault();
+      goView(e.key==='`'?(cur+1)%VIEWS:+e.key-1);}
     else if(e.key==='Escape'){if(mode!=='select')setMode('select');else{sel=null;selStreet=null;render();}}
     else if(e.key==='Enter'&&mode==='draw'){finishDraw();}
     else if(e.key==='Backspace'&&mode==='draw'&&drawPts.length){drawPts.pop();render();}
