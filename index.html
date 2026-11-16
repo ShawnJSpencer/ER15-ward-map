@@ -143,6 +143,7 @@ const STORE_KEY = 'elkridge15-ward-map';
 const FONT = 'Helvetica, Arial, "Liberation Sans", sans-serif';
 const SZ = {name:29, num:23, street:42, tag:22, updated:26};
 const LINE_W = 7;
+const TAGS = {w12:'12th Ward', page1:'See Page 1', stake:'Elk Ridge West Stake'};
 const COMBO = {"s":1.098253,"tx":1711.769,"ty":-337.847,"seam":[[1890,-2000],[1890,150],[2207,110],[2207.0,266.0],[2209.0,609.5999755859375],[2204.0,644.0],[2209.199951171875,689.7999877929688],[2210.0,978.5999755859375],[2112.0,1013.0],[2208.300048828125,1023.0],[2210.0,1170.5],[2195.5,1200.0],[2240.300048828125,1317.0],[2243.300048828125,1952.0],[2168.0,1963.0],[2245.0,2000.0],[2244.300048828125,2273.0],[2205.0,2285.0],[2206.199951171875,2404.39990234375],[2202.199951171875,2434.300048828125],[2209.60009765625,2444.0],[2113.5,2464.10009765625],[2224.10009765625,2474.199951171875],[2024.9000244140625,2494.0],[2237.10009765625,2504.5],[2262.5,2565.0],[2226.5,2595.199951171875],[2072.5,2686.0],[2241.300048828125,2723.0],[2322.89990234375,2866.89990234375],[2335.60009765625,2895.699951171875],[2353.0,2976.0],[2191.60009765625,2982.0],[2361.5,3005.89990234375],[2400.300048828125,3185.0],[2400.300048828125,6000]],"box":{"x":0,"y":-340,"w":4516,"h":3640},"upd":{"x":4271,"y":3234}}; // how page 2 lines up with page 1 on the big map
 const VIEWS = 3;
 
@@ -278,13 +279,12 @@ function layoutLot0(lot){
       if(best.size>got){runs.length=mark;box=fit(main,anchor.x+best.dx,anchor.y+best.dy,undefined,lot.wrap,true);}
     }
   }
-  else if(lot.status==='w12'||lot.status==='page1'){
-    const t=lot.status==='w12'?'12th Ward':'See Page 1';const v=lot.label||visualCenter(lot);const c=chordX(lot.poly,v.y,v.x);
-    const room=c?(c[1]-c[0])-10:999;let done=false;
-    for(let sz=SZ.tag;sz>=14&&!done;sz--){
-      if(textW(t,sz,false)<=room){runs.push({t,x:v.x,y:v.y+sz*0.36,size:sz,b:false,i:true,anchor:'middle',color:'#555'});done=true;}
-      else{const parts=t==='12th Ward'?['12th','Ward']:['See','Page 1'];
-        if(Math.max(...parts.map(p=>textW(p,sz,false)))<=room){parts.forEach((p,k)=>runs.push({t:p,x:v.x,y:v.y+sz*0.36+(k-0.5)*sz*1.1,size:sz,b:false,i:true,anchor:'middle',color:'#555'}));done=true;}}
+  else if(TAGS[lot.status]){
+    const t=TAGS[lot.status];const v=lot.label||visualCenter(lot);const c=chordX(lot.poly,v.y,v.x);
+    const room=c?(c[1]-c[0])-10:999;
+    for(let sz=lot.status==='stake'?34:SZ.tag;sz>=14;sz--){
+      const parts=textW(t,sz,false)<=room?[t]:wrapWords(t,room,sz,false);
+      if(Math.max(...parts.map(p=>textW(p,sz,false)))<=room){parts.forEach((p,k)=>runs.push({t:p,x:v.x,y:v.y+sz*0.36+(k-(parts.length-1)/2)*sz*1.1,size:sz,b:false,i:true,anchor:'middle',color:'#555'}));break;}
     }
   }
   lot.households.forEach((h,k)=>{if(!(h.pos&&(h.first||h.last)))return;
@@ -333,11 +333,12 @@ function streetSVG(s,k,interactive){return `<g transform="translate(${s.x} ${s.y
       (interactive&&selStreet===k?`<rect x="${-textW(s.text,s.size||SZ.street,false)/2-8}" y="${-(s.size||SZ.street)*0.6}" width="${textW(s.text,s.size||SZ.street,false)+16}" height="${(s.size||SZ.street)*1.2}" fill="rgba(31,111,235,.12)" stroke="#1f6feb" stroke-width="3"/>`:'')+
       runSVG({t:s.text,x:0,y:(s.size||SZ.street)*0.36,size:s.size||SZ.street,b:false,i:false})+`</g>`;}
 function pageBody(pg,interactive,big=false){
-  const o=[];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
+  const o=[`<defs><pattern id="stakeHatch" patternUnits="userSpaceOnUse" width="26" height="26" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="26" stroke="#bdbdbd" stroke-width="3"/></pattern></defs>`];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
   for(const L of lots){
     if(heat){const c=lotHeat(L);if(c)o.push(`<path d="${polyPath(L.poly)}" fill="${hex(c)}"/>`);}
     if(L.status==='w12')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
     else if(L.status==='page1')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
+    else if(L.status==='stake')o.push(`<path d="${polyPath(L.poly)}" fill="#f1f1f1"/><path d="${polyPath(L.poly)}" fill="url(#stakeHatch)"/>`);
   }
   for(const im of pg.images||[])o.push(`<image href="${im.src}" x="${im.x}" y="${im.y}" width="${im.w}" height="${im.h}"/>`);
   for(const w of pg.water||[]){o.push(`<path d="${polyPath(w.poly)}" fill="#d7e9f7"/>`);
@@ -485,12 +486,20 @@ async function useHandle(h,{fresh=false}={}){
   if(fresh){await writeFile();}
   else{
     let d;try{d=await readFile();}catch(e){alert(e.message);fileHandle=null;fileState='none';fileUI();return;}
+    const patched=applyPatches(d);
     if((d.savedAt||0)>=(data.savedAt||0)||!localHasNames()){data=d;undoStack=[];redoStack=[];sel=null;selStreet=null;try{localStorage.setItem(STORE_KEY,JSON.stringify(data));}catch(e){}fit();}
     fileState='linked';
-    if((data.savedAt||0)>(d.savedAt||0))await writeFile();
+    if(patched&&data===d){data.savedAt=Date.now();try{localStorage.setItem(STORE_KEY,JSON.stringify(data));}catch(e){}await writeFile();}
+    else if((data.savedAt||0)>(d.savedAt||0))await writeFile();
   }
   await idb('put',h);fileState='linked';fileUI();
 }
+const DATA_PATCHES = [{"id":"carson-way-sections","page":0,"lots":[{"id":"cw-nw","poly":[[3,1203],[112,1108],[603,663],[687,598],[771,547],[1647,96],[1746,43],[1811,20],[1812,3],[3,3]],"households":[],"status":"none","section":true},{"id":"cw-ne","poly":[[1822,3],[1828,122],[1859,214],[1864,217],[2229,137],[2239,133],[2546,62],[2546,3]],"households":[],"status":"none","section":true},{"id":"cw-west","poly":[[210,1714],[187,1718],[154,1732],[3,1732],[3,3209],[242,3207],[256,3197],[261,3185],[257,2948],[246,2860],[235,1980],[234,1731],[225,1720]],"households":[],"status":"none","section":true},{"id":"cw-inner","poly":[[1319,602],[1297,604],[881,820],[813,869],[404,1236],[371,1276],[349,1330],[345,1371],[346,1576],[352,1591],[363,1599],[542,1596],[544,1594],[544,1584],[517,1393],[626,1330],[779,1193],[868,1086],[1004,992],[1112,934],[1116,930],[1103,856],[1103,850],[1106,847],[1147,834],[1360,756],[1360,709],[1354,676],[1331,615]],"households":[],"status":"none","section":true}]}];
+function applyPatches(d){let changed=false;d.patches=d.patches||[];
+  for(const P of DATA_PATCHES){if(d.patches.includes(P.id))continue;const pg=d.pages[P.page];if(!pg)continue;
+    for(const L of P.lots){if(!pg.lots.some(l=>l.id===L.id))pg.lots.unshift(JSON.parse(JSON.stringify(L)));}
+    d.patches.push(P.id);changed=true;}
+  return changed;}
 function localHasNames(){return data.pages.some(p=>p.lots.some(l=>l.households.length));}
 async function openDataFile(){
   if(fileHandle&&fileState==='permission'){return useHandle(fileHandle);}
@@ -592,7 +601,7 @@ function renderPanel(){
         <button class="btn small danger" data-act="del" data-k="${k}">Remove</button>
       </div></div>`;
   const st=L.status||'ward';
-  el.innerHTML=`<h2>${L.number&&L.number.text?'House #'+esc(L.number.text):'Lot'}</h2>
+  el.innerHTML=`<h2>${L.number&&L.number.text?'House #'+esc(L.number.text):L.section?'Area along Carson Way':'Lot'}</h2>
     <div class="field"><label>House number</label><input type="text" id="numText" value="${esc(L.number?L.number.text:'')}" placeholder="e.g. 1462"></div>
     ${L.number&&L.number.text?`<div class="field"><label>Number angle (${L.number.rot||0}°)</label><input type="range" id="numRot" min="-180" max="180" step="1" value="${L.number.rot||0}"></div>
     <div class="row"><button class="btn small" id="numAuto" title="Put the number back along the street side">Auto-place number</button></div>`:''}
@@ -604,6 +613,7 @@ function renderPanel(){
     <div class="status">
       <label><input type="radio" name="st" value="ward" ${st==='ward'?'checked':''}> In our ward (15th)</label>
       <label><input type="radio" name="st" value="w12" ${st==='w12'?'checked':''}> Elk Ridge 12th Ward <span class="muted">(gray)</span></label>
+      <label><input type="radio" name="st" value="stake" ${st==='stake'?'checked':''}> Elk Ridge West Stake <span class="muted">(striped)</span></label>
       <label><input type="radio" name="st" value="page1" ${st==='page1'?'checked':''}> Shown on Page 1 <span class="muted">(gray)</span></label>
       <label><input type="radio" name="st" value="none" ${st==='none'?'checked':''}> Not a home / leave blank</label>
     </div>
@@ -619,7 +629,7 @@ function renderPanel(){
   });
   el.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>{const k=+b.dataset.k,a=b.dataset.act;change(()=>{const H=L.households;
     if(a==='del')H.splice(k,1);else if(a==='up')[H[k-1],H[k]]=[H[k],H[k-1]];else if(a==='down')[H[k+1],H[k]]=[H[k],H[k+1]];else if(a==='attach')delete H[k].pos;});});
-  const addF=base=>change(()=>{L.households.push({first:'',last:'',basement:base,added:todayISO()});if(L.status==='none'||L.status==='w12'||L.status==='page1')L.status='ward';});
+  const addF=base=>change(()=>{L.households.push({first:'',last:'',basement:base,added:todayISO()});if(L.status!=='ward')L.status='ward';});
   $('#addFam').onclick=()=>{addF(false);focusLast();};$('#addBase').onclick=()=>{addF(true);focusLast();};
   if($('#clearFams'))$('#clearFams').onclick=()=>{if(confirm('Remove all names from this home?'))change(()=>{L.households=[];});};
   $('#numText').onchange=e=>change(()=>{const v=e.target.value.trim();if(!v){delete L.number;return;}if(!L.number||L.number.x===undefined){L.number={text:v,...autoNumber(L,page().lots)};}else L.number.text=v;},{panel:!(L.number&&L.number.x!==undefined&&e.target.value.trim())});
@@ -776,6 +786,8 @@ async function buildPdf(opts={}){
       if(heat){const hc=lotHeat(L);if(hc)c.push(`${hc.map(f2).join(' ')} rg `+pdfPolyPath(L.poly)+' f');}
       if(L.status==='w12')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
       else if(L.status==='page1')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
+      else if(L.status==='stake'){const b=bbox(L.poly);c.push('0.945 g '+pdfPolyPath(L.poly)+' f');c.push('q '+pdfPolyPath(L.poly)+' W n 0.74 G 3 w');
+        for(let t=b.x0-(b.y1-b.y0)-40;t<b.x1+40;t+=36.8){c.push(`${f2(t)} ${f2(b.y1+5)} m ${f2(t+(b.y1-b.y0)+10)} ${f2(b.y0-5)} l S`);}c.push('Q');}
     }
     let ii=0;for(const im of pg.images||[]){const d=await imageToPdf(im);ii++;
       const sm=add({dict:`<< /Type /XObject /Subtype /Image /Width ${d.w} /Height ${d.h} /ColorSpace /DeviceGray /BitsPerComponent 8 ${d.a.f}/Length ${d.a.d.length} >>`,data:d.a.d});
@@ -841,6 +853,7 @@ function init(){
       if(old<2)for(const id of (d.page1Ids||[])){const L=p.lots.find(l=>l.id===id);if(L&&L.status==='ward'&&!L.households.length)L.status='page1';}});
     stored.rev=3;}
   data=(stored&&stored.pages)?stored:clone(DEFAULT_DATA);
+  applyPatches(data);
   try{localStorage.setItem(STORE_KEY,JSON.stringify(data));}catch(e){}
   initFile();
   $('#fileLink').onclick=linkFile;
