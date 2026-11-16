@@ -222,7 +222,7 @@ function famLines(h,size,maxW){
   return out;}
 function blockFor(hhs,size,maxW){
   const lh=size*1.13;const lines=[];
-  hhs.forEach((h,k)=>{const ls=famLines(h,size,maxW);if(k>0&&ls.length)ls[0].gap=size*0.3;lines.push(...ls);});
+  hhs.forEach((h,k)=>{const ls=famLines(h,size,maxW);ls.forEach(l=>l.hk=k);if(k>0&&ls.length)ls[0].gap=size*0.3;lines.push(...ls);});
   let y=0;for(const l of lines){y+=(l.gap||0);l.y=y;y+=lh;}
   const H=y-(lh-size*0.95);const W=Math.max(0,...lines.map(l=>textW(l.t,size,l.b)));
   return {lines,H,W,lh};}
@@ -263,7 +263,7 @@ function layoutLot0(lot){
     }
     if(size<minSize)size=minSize;
     const top=ay-blk.H/2;
-    for(const l of blk.lines){runs.push({t:l.t,x:ax,y:top+l.y+size*0.74,size,b:l.b,i:l.i,anchor:'middle',det});}
+    for(const l of blk.lines){runs.push({t:l.t,x:ax,y:top+l.y+size*0.74,size,b:l.b,i:l.i,anchor:'middle',det,hk:l.hk});}
     return {x0:ax-blk.W/2,x1:ax+blk.W/2,y0:top,y1:top+blk.H};
   };
   let box=null;
@@ -335,7 +335,7 @@ function streetSVG(s,k,interactive){return `<g transform="translate(${s.x} ${s.y
 function pageBody(pg,interactive,big=false){
   const o=[`<defs><pattern id="stakeHatch" patternUnits="userSpaceOnUse" width="26" height="26" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="26" stroke="#bdbdbd" stroke-width="3"/></pattern></defs>`];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
   for(const L of lots){
-    if(heat){const c=lotHeat(L);if(c)o.push(`<path d="${polyPath(L.poly)}" fill="${hex(c)}"/>`);}
+    if(heat)o.push(heatSVG(L));
     if(L.status==='w12')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
     else if(L.status==='page1')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
     else if(L.status==='stake')o.push(`<path d="${polyPath(L.poly)}" fill="#f1f1f1"/><path d="${polyPath(L.poly)}" fill="url(#stakeHatch)"/>`);
@@ -399,6 +399,45 @@ function heatT(days){
 function hsl2rgb(h,s,l){const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l),f=n=>l-a*Math.max(-1,Math.min(k(n)-3,9-k(n),1));return [f(0),f(8),f(4)];}
 function heatRGB(t){const c=hsl2rgb(265*t,0.9,0.55),o=0.62;return c.map(v=>v*o+(1-o));}
 const hex=c=>'#'+c.map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
+function famColor(h){const a=ageDays(h);return a===null?null:heatRGB(heatT(a));}
+const HEAT_MARGIN=28,HEAT_SEAM=9; // white space kept inside the lot lines, and between two families
+function heatParts(L){ // colored bands, one per family (top to bottom, split between their names)
+  if(L.status!=='ward')return null;
+  const main=L.households.filter(h=>!h.pos&&(h.first||h.last));
+  const {runs}=layoutLot(L);const b=bbox(L.poly);
+  const bands=[];const seams=[];
+  if(main.length){
+    const ext=main.map(()=>({t:Infinity,b:-Infinity}));
+    for(const r of runs){if(r.det!==undefined||r.hk===undefined||!ext[r.hk])continue;ext[r.hk].t=Math.min(ext[r.hk].t,r.y-r.size*0.8);ext[r.hk].b=Math.max(ext[r.hk].b,r.y+r.size*0.25);}
+    let y0=b.y0-40;
+    main.forEach((h,k)=>{let y1=b.y1+40;
+      if(k<main.length-1&&isFinite(ext[k].b)&&isFinite(ext[k+1].t)){y1=(ext[k].b+ext[k+1].t)/2;seams.push(y1);}
+      bands.push({y0,y1,c:famColor(h)});y0=y1;});
+  }
+  const dots=[];
+  L.households.forEach((h,k)=>{if(!h.pos||!(h.first||h.last))return;const c=famColor(h);if(!c)return;
+    const rs=runs.filter(r=>r.det===k);if(!rs.length)return;
+    const x0=Math.min(...rs.map(r=>r.x-textW(r.t,r.size,r.b)/2));dots.push({x:x0-20,y:rs[0].y-rs[0].size*0.35,c});});
+  if(!bands.some(x=>x.c)&&!dots.length)return null;
+  return {bands,seams,dots,b};
+}
+function heatSVG(L){const P=heatParts(L);if(!P)return '';const id='hc'+L.id;const d=polyPath(L.poly);let o='';
+  if(P.bands.some(x=>x.c)){
+    o+=`<clipPath id="${id}"><path d="${d}"/></clipPath><g clip-path="url(#${id})">`+
+      P.bands.filter(x=>x.c).map(x=>`<rect x="${P.b.x0-40}" y="${x.y0}" width="${P.b.x1-P.b.x0+80}" height="${x.y1-x.y0}" fill="${hex(x.c)}"/>`).join('')+
+      P.seams.map(y=>`<line x1="${P.b.x0-40}" y1="${y}" x2="${P.b.x1+40}" y2="${y}" stroke="#fff" stroke-width="${HEAT_SEAM}"/>`).join('')+
+      `<path d="${d}" fill="none" stroke="#fff" stroke-width="${HEAT_MARGIN}" stroke-linejoin="round"/></g>`;}
+  for(const t of P.dots)o+=`<circle cx="${t.x}" cy="${t.y}" r="11" fill="${hex(t.c)}" stroke="#000" stroke-width="2.5"/>`;
+  return o;}
+function heatPDF(L,c){const P=heatParts(L);if(!P)return;const pp=pdfPolyPath(L.poly);
+  if(P.bands.some(x=>x.c)){
+    c.push('q '+pp+' W n');
+    for(const x of P.bands)if(x.c)c.push(`${x.c.map(f2).join(' ')} rg ${f2(P.b.x0-40)} ${f2(x.y0)} ${f2(P.b.x1-P.b.x0+80)} ${f2(x.y1-x.y0)} re f`);
+    for(const y of P.seams)c.push(`1 G ${HEAT_SEAM} w 0 J ${f2(P.b.x0-40)} ${f2(y)} m ${f2(P.b.x1+40)} ${f2(y)} l S`);
+    c.push(`1 G ${HEAT_MARGIN} w 1 j `+pp+' S Q');}
+  for(const t of P.dots){const r=11,k=0.5523*r,{x,y}=t;
+    c.push(`${t.c.map(f2).join(' ')} rg 0 G 2.5 w ${f2(x+r)} ${f2(y)} m ${f2(x+r)} ${f2(y+k)} ${f2(x+k)} ${f2(y+r)} ${f2(x)} ${f2(y+r)} c ${f2(x-k)} ${f2(y+r)} ${f2(x-r)} ${f2(y+k)} ${f2(x-r)} ${f2(y)} c ${f2(x-r)} ${f2(y-k)} ${f2(x-k)} ${f2(y-r)} ${f2(x)} ${f2(y-r)} c ${f2(x+k)} ${f2(y-r)} ${f2(x+r)} ${f2(y-k)} ${f2(x+r)} ${f2(y)} c B`);}
+}
 function lotHeat(L){if(L.status!=='ward')return null;let best=null;for(const h of realFams(L)){const a=ageDays(h);if(a!==null&&(best===null||a<best))best=a;}return best===null?null:heatRGB(heatT(best));}
 function lotTip(L){return realFams(L).map(h=>{const a=ageDays(h);return `${(h.first+' '+h.last).trim()} — ${a===null?'no move-in date yet':'moved in '+fmtAdded(h.added)+' ('+ageText(a)+')'}`;}).join('\n');}
 function heatLegend(x,y){ // shapes shared by the screen and the PDF
@@ -557,7 +596,7 @@ function renderPanel(){
     rows.sort((a,b)=>{const x=ageDays(a.h),y=ageDays(b.h);if(x===null&&y===null)return (a.h.last||'').localeCompare(b.h.last||'');if(x===null)return -1;if(y===null)return 1;return x-y;});
     const unknown=rows.filter(r=>!r.h.added).length;
     el.innerHTML=`<h2>Heat map</h2>
-      <p class="muted">Homes are colored by when the family moved in: <b style="color:#c62828">red</b> = newest, through orange, yellow, green and blue, to <b style="color:#5b3fb5">violet</b> = longest here. The colors update by themselves as time passes. Hover over a home to see its dates.</p>
+      <p class="muted">Homes are colored by when the family moved in (a house with two families is split, each color behind its own names): <b style="color:#c62828">red</b> = newest, through orange, yellow, green and blue, to <b style="color:#5b3fb5">violet</b> = longest here. The colors update by themselves as time passes. Hover over a home to see its dates.</p>
       <div class="status"><label><input type="radio" name="hs" value="fit" ${heatScale==='fit'?'checked':''}> Stretch colors from our newest to our oldest family</label>
       <label><input type="radio" name="hs" value="fixed" ${heatScale==='fixed'?'checked':''}> Fixed scale: now → 10+ years</label></div>
       <h3>Move-in dates ${unknown?`<span style="color:var(--danger)">· ${unknown} not set</span>`:''}</h3>
@@ -786,7 +825,7 @@ async function buildPdf(opts={}){
   async function pageOps(pg,c,xo,big=false){
     const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
     for(const L of lots){
-      if(heat){const hc=lotHeat(L);if(hc)c.push(`${hc.map(f2).join(' ')} rg `+pdfPolyPath(L.poly)+' f');}
+      if(heat)heatPDF(L,c);
       if(L.status==='w12')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
       else if(L.status==='page1')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
       else if(L.status==='stake'){const b=bbox(L.poly);c.push('0.945 g '+pdfPolyPath(L.poly)+' f');c.push('q '+pdfPolyPath(L.poly)+' W n 0.74 G 3 w');
