@@ -333,7 +333,7 @@ function streetSVG(s,k,interactive){return `<g transform="translate(${s.x} ${s.y
       (interactive&&selStreet===k?`<rect x="${-textW(s.text,s.size||SZ.street,false)/2-8}" y="${-(s.size||SZ.street)*0.6}" width="${textW(s.text,s.size||SZ.street,false)+16}" height="${(s.size||SZ.street)*1.2}" fill="rgba(31,111,235,.12)" stroke="#1f6feb" stroke-width="3"/>`:'')+
       runSVG({t:s.text,x:0,y:(s.size||SZ.street)*0.36,size:s.size||SZ.street,b:false,i:false})+`</g>`;}
 function pageBody(pg,interactive,big=false){
-  const o=[`<defs><pattern id="stakeHatch" patternUnits="userSpaceOnUse" width="26" height="26" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="26" stroke="#bdbdbd" stroke-width="3"/></pattern></defs>`];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
+  const o=[`<defs>${FADE_DEFS}</defs>`,`<defs><pattern id="stakeHatch" patternUnits="userSpaceOnUse" width="26" height="26" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="26" stroke="#bdbdbd" stroke-width="3"/></pattern></defs>`];const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
   for(const L of lots){
     if(heat)o.push(heatSVG(L));
     if(L.status==='w12')o.push(`<path d="${polyPath(L.poly)}" fill="#e3e3e3"/>`);
@@ -373,8 +373,8 @@ function pageBody(pg,interactive,big=false){
 
 
 // ---------- heat map: colors homes by when the family moved in ----------
-let heat=false,heatScale='fit';
-try{heat=localStorage.getItem('wm-heat')==='1';heatScale=localStorage.getItem('wm-heatScale')||'fit';}catch(e){}
+let heat=false,heatScale='fit',heatStyle='fade';
+try{heat=localStorage.getItem('wm-heat')==='1';heatScale=localStorage.getItem('wm-heatScale')||'fit';heatStyle=localStorage.getItem('wm-heatStyle')||'fade';}catch(e){}
 const HEAT_LEGEND=[{x:60,y:60},{x:1560,y:2985}],HEAT_LEGEND_BIG={x:60,y:-300};
 const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function parseAdded(s){const m=/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s||'');return m?new Date(+m[1],m[2]?+m[2]-1:6,m[3]?+m[3]:m[2]?15:1):null;}
@@ -421,7 +421,19 @@ function heatParts(L){ // colored bands, one per family (top to bottom, split be
   if(!bands.some(x=>x.c)&&!dots.length)return null;
   return {bands,seams,dots,b};
 }
-function heatSVG(L){const P=heatParts(L);if(!P)return '';const id='hc'+L.id;const d=polyPath(L.poly);let o='';
+const FADE_DEFS=`<filter id="hfBand" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="8"/></filter><filter id="hfEdge" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>`;
+function heatFadeSVG(L,P){if(!P.bands.some(x=>x.c))return '';const id='hc'+L.id,d=polyPath(L.poly);const X0=P.b.x0-40,W=P.b.x1-P.b.x0+80;
+  return `<clipPath id="${id}"><path d="${d}"/></clipPath><g clip-path="url(#${id})"><g filter="url(#hfBand)">`+
+    P.bands.map(x=>`<rect x="${X0}" y="${x.y0}" width="${W}" height="${x.y1-x.y0}" fill="${hex(x.c||[1,1,1])}"/>`).join('')+
+    `</g><path d="${d}" fill="none" stroke="#fff" stroke-width="44" stroke-linejoin="round" filter="url(#hfEdge)"/></g>`;}
+function heatSVG(L){const P=heatParts(L);if(!P)return '';
+  if(heatStyle==='fade')return heatFadeSVG(L,P)+heatDots(P);
+  return heatMarginSVG(L,P);}
+function heatLayerSVG(pg,scale){ // soft-fade colors only, as a picture for the PDF
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(2550*scale)}" height="${Math.round(3300*scale)}" viewBox="0 0 2550 3300"><defs>${FADE_DEFS}</defs><rect width="2550" height="3300" fill="#fff"/>`+
+    pg.lots.map(L=>{const P=heatParts(L);return P?heatFadeSVG(L,P):'';}).join('')+'</svg>';}
+function heatDots(P){return P.dots.map(t=>`<circle cx="${t.x}" cy="${t.y}" r="11" fill="${hex(t.c)}" stroke="#000" stroke-width="2.5"/>`).join('');}
+function heatMarginSVG(L,P){const id='hc'+L.id;const d=polyPath(L.poly);let o='';
   if(P.bands.some(x=>x.c)){
     o+=`<clipPath id="${id}"><path d="${d}"/></clipPath><g clip-path="url(#${id})">`+
       P.bands.filter(x=>x.c).map(x=>`<rect x="${P.b.x0-40}" y="${x.y0}" width="${P.b.x1-P.b.x0+80}" height="${x.y1-x.y0}" fill="${hex(x.c)}"/>`).join('')+
@@ -430,7 +442,8 @@ function heatSVG(L){const P=heatParts(L);if(!P)return '';const id='hc'+L.id;cons
   for(const t of P.dots)o+=`<circle cx="${t.x}" cy="${t.y}" r="11" fill="${hex(t.c)}" stroke="#000" stroke-width="2.5"/>`;
   return o;}
 function heatPDF(L,c){const P=heatParts(L);if(!P)return;const pp=pdfPolyPath(L.poly);
-  if(P.bands.some(x=>x.c)){
+  if(heatStyle==='fade'){/* colors come from the picture layer; only the dots are drawn here */}
+  else if(P.bands.some(x=>x.c)){
     c.push('q '+pp+' W n');
     for(const x of P.bands)if(x.c)c.push(`${x.c.map(f2).join(' ')} rg ${f2(P.b.x0-40)} ${f2(x.y0)} ${f2(P.b.x1-P.b.x0+80)} ${f2(x.y1-x.y0)} re f`);
     for(const y of P.seams)c.push(`1 G ${HEAT_SEAM} w 0 J ${f2(P.b.x0-40)} ${f2(y)} m ${f2(P.b.x1+40)} ${f2(y)} l S`);
@@ -599,11 +612,15 @@ function renderPanel(){
       <p class="muted">Homes are colored by when the family moved in (a house with two families is split, each color behind its own names): <b style="color:#c62828">red</b> = newest, through orange, yellow, green and blue, to <b style="color:#5b3fb5">violet</b> = longest here. The colors update by themselves as time passes. Hover over a home to see its dates.</p>
       <div class="status"><label><input type="radio" name="hs" value="fit" ${heatScale==='fit'?'checked':''}> Stretch colors from our newest to our oldest family</label>
       <label><input type="radio" name="hs" value="fixed" ${heatScale==='fixed'?'checked':''}> Fixed scale: now → 10+ years</label></div>
+      <h3>Color style</h3>
+      <div class="status"><label><input type="radio" name="hst" value="fade" ${heatStyle==='fade'?'checked':''}> Soft fade (color fades to white near the lines)</label>
+      <label><input type="radio" name="hst" value="margin" ${heatStyle==='margin'?'checked':''}> White margin (crisp patch, white gap at the lines)</label></div>
       <h3>Move-in dates ${unknown?`<span style="color:var(--danger)">· ${unknown} not set</span>`:''}</h3>
       <p class="muted">Type a month for each family, like <b>3/2024</b>, <b>Mar 2024</b> or just <b>2024</b>, and press <span class="kbd">Tab</span> to go down the list. New families get today’s date automatically.</p>
       ${rows.map((r,i)=>`<div class="row" style="margin-bottom:4px;align-items:center"><span style="flex:1.4;font-size:13px">${esc((r.h.first+' '+r.h.last).trim())}${r.h.basement?' <i class="muted">(bsmt)</i>':''}<br><small class="muted">#${esc(r.l.number?r.l.number.text:'?')} · Page ${r.pi+1}</small></span>
         <input type="text" data-hr="${i}" value="${esc(showAdded(r.h.added))}" placeholder="3/2024" style="flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:6px;${r.h.added?'':'background:#fff8e1'}"></div>`).join('')}
       <p class="muted" style="margin-top:12px">Exports include the colors and the color key while the heat map is on.</p>`;
+    el.querySelectorAll('input[name=hst]').forEach(r=>r.onchange=()=>{heatStyle=r.value;try{localStorage.setItem('wm-heatStyle',heatStyle);}catch(e){}render({panel:false});});
     el.querySelectorAll('input[name=hs]').forEach(r=>r.onchange=()=>{heatScale=r.value;try{localStorage.setItem('wm-heatScale',heatScale);}catch(e){}render();});
     el.querySelectorAll('[data-hr]').forEach(inp=>inp.onchange=()=>{const r=rows[+inp.dataset.hr];const v=readDateInput(inp.value);if(v===null){inp.style.borderColor='var(--danger)';toast('Type the month like 3/2024 or Mar 2024');return;}inp.style.borderColor='';
       change(()=>{if(v)r.h.added=v;else delete r.h.added;},{panel:false,touchDate:false});inp.value=showAdded(v);inp.style.background=v?'':'#fff8e1';});
@@ -824,6 +841,11 @@ async function buildPdf(opts={}){
   }
   async function pageOps(pg,c,xo,big=false){
     const lots=big?pg.lots.filter(l=>l.status!=='page1'):pg.lots;
+    if(heat&&heatStyle==='fade'&&lots.some(l=>heatParts(l))){
+      const d=await imageToPdf({src:'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(heatLayerSVG(pg,0.5))});
+      const id=add({dict:`<< /Type /XObject /Subtype /Image /Width ${d.w} /Height ${d.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 ${d.rgb.f}/Length ${d.rgb.d.length} >>`,data:d.rgb.d});
+      const nm='Heat'+(pg.id||'');xo[nm]=id;c.push(`q 2550 0 0 -3300 0 3300 cm /${nm} Do Q`);
+      }
     for(const L of lots){
       if(heat)heatPDF(L,c);
       if(L.status==='w12')c.push('0.89 g '+pdfPolyPath(L.poly)+' f');
