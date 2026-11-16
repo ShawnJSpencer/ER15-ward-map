@@ -375,7 +375,7 @@ function pageBody(pg,interactive,big=false){
 // ---------- heat map: colors homes by when the family moved in ----------
 let heat=false,heatScale='fit',heatStyle='fade';
 try{heat=localStorage.getItem('wm-heat')==='1';heatScale=localStorage.getItem('wm-heatScale')||'fit';heatStyle=localStorage.getItem('wm-heatStyle')||'fade';}catch(e){}
-const HEAT_LEGEND=[{x:60,y:60},{x:1560,y:2985}],HEAT_LEGEND_BIG={x:60,y:-300};
+const HEAT_LEGEND=[{x:60,y:60},{x:1490,y:2985}],HEAT_LEGEND_BIG={x:60,y:-300};
 const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function parseAdded(s){const m=/^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(s||'');return m?new Date(+m[1],m[2]?+m[2]-1:6,m[3]?+m[3]:m[2]?15:1):null;}
 function readDateInput(v){ // "3/2024", "03/2024", "Mar 2024", "March 2024", "2024-03", "2024" -> stored value; '' clears; null = can't read
@@ -394,8 +394,8 @@ function heatRange(){let lo=Infinity,hi=-Infinity;for(const p of data.pages)for(
   return lo===Infinity?null:{lo,hi};}
 let heatCache=null;
 function heatT(days){
-  if(heatScale==='fixed')return Math.min(1,Math.log1p(days)/Math.log1p(3652));
-  const r=heatCache||heatRange();if(!r)return 0;const a=Math.log1p(r.lo),b=Math.log1p(r.hi);return b-a<1e-6?0:Math.min(1,Math.max(0,(Math.log1p(days)-a)/(b-a)));}
+  if(heatScale==='fixed')return Math.min(1,days/3652); // even steps: 0 to 10 years
+  const r=heatCache||heatRange();if(!r)return 0;return r.hi-r.lo<1?0:Math.min(1,Math.max(0,(days-r.lo)/(r.hi-r.lo)));} // even steps from newest to oldest
 function hsl2rgb(h,s,l){const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l),f=n=>l-a*Math.max(-1,Math.min(k(n)-3,9-k(n),1));return [f(0),f(8),f(4)];}
 function heatRGB(t){const c=hsl2rgb(265*t,0.9,0.55),o=0.62;return c.map(v=>v*o+(1-o));}
 const hex=c=>'#'+c.map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
@@ -454,16 +454,17 @@ function heatPDF(L,c){const P=heatParts(L);if(!P)return;const pp=pdfPolyPath(L.p
 function lotHeat(L){if(L.status!=='ward')return null;let best=null;for(const h of realFams(L)){const a=ageDays(h);if(a!==null&&(best===null||a<best))best=a;}return best===null?null:heatRGB(heatT(best));}
 function lotTip(L){return realFams(L).map(h=>{const a=ageDays(h);return `${(h.first+' '+h.last).trim()} — ${a===null?'no move-in date yet':'moved in '+fmtAdded(h.added)+' ('+ageText(a)+')'}`;}).join('\n');}
 function heatLegend(x,y){ // shapes shared by the screen and the PDF
-  const W=560,bh=34,N=40,rects=[],texts=[];
+  const W=800,bh=34,N=60,rects=[],texts=[];
   rects.push({x:x-18,y:y-18,w:W+36,h:200,fill:[1,1,1],stroke:true});
   texts.push({t:'Moved into the ward',x:x,y:y+24,size:28,b:true,i:false,anchor:'start'});
   for(let i=0;i<N;i++){rects.push({x:x+i*W/N,y:y+44,w:W/N+0.6,h:bh,fill:heatRGB(i/(N-1))});}
   rects.push({x:x,y:y+44,w:W,h:bh,fill:null,stroke:true});
   let ticks;
-  if(heatScale==='fixed')ticks=[[0,'Now'],[182,'6 mo'],[365,'1 yr'],[1826,'5 yr'],[3652,'10 yr+']].map(([d,l])=>[heatT(d),l]);
-  else{const r=heatCache||heatRange();ticks=r?[[0,'Newest'],[1,'Oldest']]:[[0,'No dates yet']];
-    if(r){const d0=new Date(Date.now()-r.lo*864e5),d1=new Date(Date.now()-r.hi*864e5);ticks=[[0,MON[d0.getMonth()]+' '+d0.getFullYear()],[1,MON[d1.getMonth()]+' '+d1.getFullYear()]];
-      const mid=Math.expm1((Math.log1p(r.lo)+Math.log1p(r.hi))/2),dm=new Date(Date.now()-mid*864e5);if(r.hi-r.lo>60)ticks.splice(1,0,[0.5,MON[dm.getMonth()]+' '+dm.getFullYear()]);}}
+  if(heatScale==='fixed')ticks=[[0,'Now'],[0.25,'2½ yr'],[0.5,'5 yr'],[0.75,'7½ yr'],[1,'10 yr+']];
+  else{const r=heatCache||heatRange();
+    if(!r)ticks=[[0,'No dates yet']];
+    else{const lab=t=>{const d=new Date(Date.now()-(r.lo+t*(r.hi-r.lo))*864e5);return MON[d.getMonth()]+' '+d.getFullYear();};
+      ticks=(r.hi-r.lo>400?[0,0.25,0.5,0.75,1]:r.hi-r.lo>60?[0,0.5,1]:[0,1]).map(t=>[t,lab(t)]);}}
   ticks.forEach(([t,l],i)=>texts.push({t:l,x:x+t*W,y:y+44+bh+30,size:22,b:false,i:false,anchor:t<0.02?'start':t>0.98?'end':'middle'}));
   rects.push({x:x,y:y+128,w:28,h:28,fill:[1,1,1],stroke:true});
   texts.push({t:'No move-in date yet',x:x+40,y:y+150,size:22,b:false,i:true,anchor:'start',color:'#555'});
