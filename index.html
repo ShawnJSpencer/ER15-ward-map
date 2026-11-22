@@ -363,6 +363,7 @@ function pageBody(pg,interactive,big=false){
     const dets=[...new Set(runs.filter(r=>r.det!==undefined).map(r=>r.det))];
     for(const k of dets)o.push(`<g ${interactive?`class="drag" data-drag="fam" data-lot="${L.id}" data-k="${k}"`:''}>${runs.filter(r=>r.det===k).map(r=>runSVG(r)).join('')}</g>`);
     for(const a of arrows)o.push(arrowSVG(a));
+    if(L.sale)o.push(signSVG(L,interactive));
     if(L.number&&L.number.text){const n=L.number;const r=numberRun(n);
       o.push(`<g transform="translate(${n.x} ${n.y}) rotate(${n.rot||0})" ${interactive?`class="drag" data-drag="num" data-lot="${L.id}"`:''}>${runSVG({...r,x:0,y:r.size*0.36})}</g>`);}
   }
@@ -476,6 +477,54 @@ function legendPDF(p,c){const {rects,texts}=heatLegend(p.x,p.y);
   for(const r of rects){if(r.fill)c.push(`${r.fill.map(f2).join(' ')} rg ${f2(r.x)} ${f2(r.y)} ${f2(r.w)} ${f2(r.h)} re f`);if(r.stroke)c.push(`0 G 3 w ${f2(r.x)} ${f2(r.y)} ${f2(r.w)} ${f2(r.h)} re S`);}
   for(const t of texts)c.push(pdfText(t));}
 function setHeat(on){heat=on;try{localStorage.setItem('wm-heat',on?'1':'0');}catch(e){}$('#heatBtn').classList.toggle('primary',on);render();}
+
+
+// ---------- "For sale" sign: shapes shared by the screen and the PDF ----------
+const SIGN={post:'#a0703f',dark:'#3b2a1a',board:'#ff5d73',star:'#ffd23f',g1:'#43a047',g2:'#7cc576',g3:'#2e7d32'};
+const SIGN_TILT=-6,SIGN_SIZES={small:0.55,medium:0.78,large:1};
+const signK=L=>SIGN_SIZES[L.sale&&L.sale.size]||SIGN_SIZES.medium; // degrees, board tilts a little for fun
+function rrect(x,y,w,h,r){const k=0.5523*r;return [['M',x+r,y],['L',x+w-r,y],['C',x+w-r+k,y,x+w,y+r-k,x+w,y+r],['L',x+w,y+h-r],['C',x+w,y+h-r+k,x+w-r+k,y+h,x+w-r,y+h],['L',x+r,y+h],['C',x+r-k,y+h,x,y+h-r+k,x,y+h-r],['L',x,y+r],['C',x,y+r-k,x+r-k,y,x+r,y],['Z']];}
+function circ(cx,cy,r){const k=0.5523*r;return [['M',cx+r,cy],['C',cx+r,cy+k,cx+k,cy+r,cx,cy+r],['C',cx-k,cy+r,cx-r,cy+k,cx-r,cy],['C',cx-r,cy-k,cx-k,cy-r,cx,cy-r],['C',cx+k,cy-r,cx+r,cy-k,cx+r,cy],['Z']];}
+function signShapes(){ // relative to the point where the post meets the ground
+  return {
+    back:[{p:rrect(-4.5,-114,9,114,2),fill:SIGN.post,stroke:SIGN.dark,w:2.5}],
+    board:[{p:rrect(-50,-124,100,58,12),fill:SIGN.board,stroke:SIGN.dark,w:3},
+           {p:rrect(-44,-118,88,46,8),fill:null,stroke:'#fff',w:2.5,dash:[7,5]},
+           {p:circ(45,-122,10),fill:SIGN.star,stroke:SIGN.dark,w:2.5}],
+    text:[{t:'FOR',y:-99,size:21},{t:'SALE',y:-77,size:21}],
+    grass:[{p:[['M',-3,1],['C',-8,-9,-15,-18,-24,-27],['C',-15,-21,-7,-12,2,1],['Z']],fill:SIGN.g1,stroke:SIGN.g3,w:1.5},
+           {p:[['M',2,1],['C',7,-8,13,-15,21,-21],['C',14,-13,10,-6,8,1],['Z']],fill:SIGN.g2,stroke:SIGN.g3,w:1.5},
+           {p:[['M',-1,1],['C',-2,-7,-1,-14,2,-20],['C',3,-13,4,-6,4,1],['Z']],fill:SIGN.g3,stroke:SIGN.g3,w:1}]};}
+const pathD=p=>p.map(c=>c[0]+c.slice(1).map(v=>+v.toFixed(2)).join(' ')).join('');
+function shapeSVG(s){return `<path d="${pathD(s.p)}" fill="${s.fill||'none'}" stroke="${s.stroke}" stroke-width="${s.w}" stroke-linejoin="round"${s.dash?` stroke-dasharray="${s.dash.join(' ')}"`:''}/>`;}
+function signSVG(L,interactive){if(!L.sale)return '';const S=signShapes(),{x,y}=L.sale;
+  return `<g transform="translate(${x} ${y}) scale(${signK(L)})" ${interactive?`class="drag" data-drag="sale" data-lot="${L.id}"`:''}>`+S.back.map(shapeSVG).join('')+
+    `<g transform="rotate(${SIGN_TILT} 0 -95)">`+S.board.map(shapeSVG).join('')+
+    S.text.map(t=>runSVG({t:t.t,x:0,y:t.y,size:t.size,b:true,i:false,anchor:'middle',color:'#fff'})).join('')+'</g>'+S.grass.map(shapeSVG).join('')+'</g>';}
+const rgbOf=h=>{if(h.length===4)h='#'+h[1]+h[1]+h[2]+h[2]+h[3]+h[3];return [1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255);};
+function shapePDF(s,c){const ops=s.p.map(q=>q[0]==='M'?`${f2(q[1])} ${f2(q[2])} m`:q[0]==='L'?`${f2(q[1])} ${f2(q[2])} l`:q[0]==='C'?`${q.slice(1).map(f2).join(' ')} c`:'h').join(' ');
+  if(s.fill)c.push(`${rgbOf(s.fill).map(f2).join(' ')} rg`);c.push(`${rgbOf(s.stroke).map(f2).join(' ')} RG ${s.w} w 1 j ${s.dash?`[${s.dash.join(' ')}] 0 d`:'[] 0 d'} ${ops} ${s.fill?'B':'S'} [] 0 d`);}
+function signPDF(L,c){if(!L.sale)return;const S=signShapes(),{x,y}=L.sale;const t=SIGN_TILT*Math.PI/180,co=Math.cos(t),si=Math.sin(t);
+  c.push(`q ${signK(L)} 0 0 ${signK(L)} ${f2(x)} ${f2(y)} cm`);S.back.forEach(s=>shapePDF(s,c));
+  c.push(`q 1 0 0 1 0 -95 cm ${f2(co)} ${f2(si)} ${f2(-si)} ${f2(co)} 0 0 cm 1 0 0 1 0 95 cm`);S.board.forEach(s=>shapePDF(s,c));
+  S.text.forEach(tx=>c.push(pdfText({t:tx.t,x:0,y:tx.y,size:tx.size,b:true,i:false,anchor:'middle',color:'#fff'})));c.push('Q');
+  S.grass.forEach(s=>shapePDF(s,c));c.push('Q');}
+function defaultSalePos(L,size){ // the spot (and size) where the whole sign fits and covers the least of the names and number
+  if(!size){const m=defaultSalePos(L,'medium');if(!m.ov)return m;const sm=defaultSalePos(L,'small');return sm.ov<m.ov?sm:m;}
+  const k=SIGN_SIZES[size],b=bbox(L.poly),{box}=layoutLot(L);
+  const sx0=-52*k,sx1=56*k,sy0=-134*k; // sign extent around its ground point
+  const keep=[];if(box)keep.push(box);
+  if(L.number&&L.number.x!==undefined){const n=L.number,w=textW(n.text,n.size||SZ.num,false)/2+4,h=14,t=(n.rot||0)*Math.PI/180,c=Math.abs(Math.cos(t)),s2=Math.abs(Math.sin(t));
+    keep.push({x0:n.x-(w*c+h*s2),x1:n.x+(w*c+h*s2),y0:n.y-(w*s2+h*c),y1:n.y+(w*s2+h*c)});}
+  const fits=(x,y)=>[[x+sx0,y],[x+sx1,y],[x+sx0,y+sy0],[x+sx1,y+sy0],[x,y+sy0/2]].every(([a,c])=>pip(a,c,L.poly)&&edgeDist(a,c,L.poly)>6);
+  const overlap=(x,y)=>keep.reduce((t,q)=>t+Math.max(0,Math.min(x+sx1,q.x1)-Math.max(x+sx0,q.x0))*Math.max(0,Math.min(y,q.y1)-Math.max(y+sy0,q.y0)),0);
+  let best=null;
+  for(let y=b.y0-sy0+8;y<=b.y1-6;y+=8)for(let x=b.x0-sx0+6;x<=b.x1-sx1-6;x+=8){if(!fits(x,y))continue;
+    const sc=overlap(x,y)+0.02*Math.min(Math.hypot(x-b.x0,y-b.y1),Math.hypot(x-b.x1,y-b.y1));
+    if(!best||sc<best[0])best=[sc,x,y];}
+  if(best)return {x:Math.round(best[1]),y:Math.round(best[2]),size,ov:Math.round(overlap(best[1],best[2]))};
+  const v=visualCenter(L);return {x:Math.round(v.x),y:Math.round(v.y+40),size,ov:1e9};}
+const salePos=(L,size)=>{const p=defaultSalePos(L,size);delete p.ov;return p;};
 
 // ---------- main render ----------
 function render({panel=true}={}){
@@ -669,6 +718,10 @@ function renderPanel(){
     ${L.households.map(fam).join('')||'<p class="muted">No names yet.</p>'}
     <div class="row"><button class="btn" id="addFam">+ Add family</button><button class="btn" id="addBase">+ Basement family</button></div>
     ${L.households.length?'<div style="margin-top:6px"><button class="btn small danger" id="clearFams">Move out (clear all names)</button></div>':''}
+    <h3>For sale</h3>
+    <label class="chk"><input type="checkbox" id="saleChk" ${L.sale?'checked':''}> Show a “For sale” sign</label>
+    ${L.sale?`<div class="row" style="margin-top:6px">${['small','medium','large'].map(z=>`<button class="btn small${(L.sale.size||'medium')===z?' primary':''}" data-ss="${z}">${z[0].toUpperCase()+z.slice(1)}</button>`).join('')}</div>
+    <p class="muted" style="margin:4px 0 0">Drag the sign on the map to move it. <a href="#" id="saleReset">Find the best spot again</a></p>`:''}
     <h3>This lot is</h3>
     <div class="status">
       <label><input type="radio" name="st" value="ward" ${st==='ward'?'checked':''}> In our ward (15th)</label>
@@ -695,6 +748,9 @@ function renderPanel(){
   $('#numText').onchange=e=>change(()=>{const v=e.target.value.trim();if(!v){delete L.number;return;}if(!L.number||L.number.x===undefined){L.number={text:v,...autoNumber(L,page().lots)};}else L.number.text=v;},{panel:!(L.number&&L.number.x!==undefined&&e.target.value.trim())});
   if($('#numRot')){$('#numRot').oninput=e=>{L.number.rot=+e.target.value;render();};$('#numRot').onchange=e=>{const v=+e.target.value;change(()=>{L.number.rot=v;});};
     $('#numAuto').onclick=()=>change(()=>{Object.assign(L.number,autoNumber(L,page().lots));});}
+  $('#saleChk').onchange=e=>change(()=>{if(e.target.checked)L.sale=salePos(L);else delete L.sale;},{touchDate:false});
+  el.querySelectorAll('[data-ss]').forEach(bt=>bt.onclick=()=>change(()=>{L.sale={...L.sale,size:bt.dataset.ss};},{touchDate:false}));
+  if($('#saleReset'))$('#saleReset').onclick=ev=>{ev.preventDefault();change(()=>{L.sale=salePos(L,L.sale.size);},{touchDate:false});};
   el.querySelectorAll('input[name=st]').forEach(r=>r.onchange=()=>change(()=>{L.status=r.value;}));
   $('#fsz').onchange=e=>change(()=>{L.fontSize=+e.target.value;});
   $('#fszAuto').onclick=()=>change(()=>{delete L.fontSize;});
@@ -761,6 +817,7 @@ function onUp(ev){
   else{const L=lotById(d.lot);sel=d.lot;selStreet=null;
     if(d.kind==='num')change(()=>{L.number.x=r(L.number.x+dx);L.number.y=r(L.number.y+dy);},{touchDate:false});
     else if(d.kind==='label')change(()=>{const a=L.label||visualCenter(L);L.label={x:r(a.x+dx),y:r(a.y+dy)};},{touchDate:false});
+    else if(d.kind==='sale')change(()=>{L.sale={...L.sale,x:r(L.sale.x+dx),y:r(L.sale.y+dy)};},{touchDate:false});
     else if(d.kind==='fam')change(()=>{const h=L.households[d.k];h.pos={x:r(h.pos.x+dx),y:r(h.pos.y+dy)};},{touchDate:false});
   }
 }
@@ -798,7 +855,7 @@ function pdfText(r,rotDeg,ox,oy){ // r.x,r.y baseline position (anchor middle/en
   let x=r.x,y=r.y;if(r.anchor==='middle')x-=w/2;else if(r.anchor==='end')x-=w;
   const th=(rotDeg||0)*Math.PI/180,c=Math.cos(th),s=Math.sin(th);
   let X=x,Y=y;if(rotDeg){X=ox+x*c-y*s;Y=oy+x*s+y*c;}else if(ox!==undefined){X=ox+x;Y=oy+y;}
-  const col=r.color==='#555'?'0.33 g':'0 g';
+  const col=r.color==='#555'?'0.33 g':r.color==='#fff'?'1 g':'0 g';
   return `BT ${col} /${font} ${f2(r.size)} Tf ${f2(c)} ${f2(s)} ${f2(s)} ${f2(-c)} ${f2(X)} ${f2(Y)} Tm ${pdfStr(r.t)} Tj ET`;}
 async function imageToPdf(im){
   const img=new Image();img.src=im.src;await img.decode();
@@ -870,6 +927,7 @@ async function buildPdf(opts={}){
       for(const a of arrows){const ang=Math.atan2(a.y2-a.y1,a.x2-a.x1);const Ln=16,W=8;
         c.push(`0 G 3 w ${f2(a.x1)} ${f2(a.y1)} m ${f2(a.x2)} ${f2(a.y2)} l S`);
         c.push(`0 g ${f2(a.x2)} ${f2(a.y2)} m ${f2(a.x2-Ln*Math.cos(ang)+W*Math.sin(ang))} ${f2(a.y2-Ln*Math.sin(ang)-W*Math.cos(ang))} l ${f2(a.x2-Ln*Math.cos(ang)-W*Math.sin(ang))} ${f2(a.y2-Ln*Math.sin(ang)+W*Math.cos(ang))} l h f`);}
+      signPDF(L,c);
       if(L.number&&L.number.text){const n=L.number;const r=numberRun(n);c.push(pdfText({...r,x:0,y:r.size*0.36,anchor:'middle'},n.rot||0,n.x,n.y));}
     }
     if(!big)for(const s of pg.streets){const size=s.size||SZ.street;c.push(pdfText({t:s.text,x:0,y:size*0.36,size,b:false,i:false,anchor:'middle'},s.rot||0,s.x,s.y));}
